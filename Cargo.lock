@@ -80,6 +80,7 @@ name = "imgdup"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "once_cell",
  "rusqlite",
  "serde",
  "thiserror",

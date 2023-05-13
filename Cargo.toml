@@ -10,3 +10,4 @@ rusqlite = {version = "0.29", features = ["blob"]}
 thiserror = "1"
 serde = {version = "1", features = ["derive"]}
 bincode = "1"
+once_cell = "1"

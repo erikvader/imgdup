@@ -1,7 +1,7 @@
-use std::{collections::HashMap, path::Path, io};
+use std::{collections::HashMap, io, path::Path};
 
 use rusqlite::Connection;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 mod sql;
 
@@ -15,7 +15,7 @@ pub enum HeapError {
     #[error("Bincode error: {0}")]
     Bincode(#[from] bincode::Error),
     #[error("IO Error: {0}")]
-    IoError(#[from] std::io::Error)
+    IoError(#[from] std::io::Error),
 }
 
 pub struct Heap<T> {
@@ -111,9 +111,7 @@ impl<T> Drop for Heap<T> {
 
 impl Ref {
     fn new(id: Uuid) -> Self {
-        Self {
-            id,
-        }
+        Self { id }
     }
 }
 
@@ -155,5 +153,4 @@ mod test {
             recur(db, l);
         }
     }
-
 }
