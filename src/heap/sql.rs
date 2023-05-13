@@ -1,10 +1,18 @@
 use std::io::Write;
 
 use once_cell::sync::Lazy;
-use rusqlite::{blob::ZeroBlob, DatabaseName, OptionalExtension, ToSql};
+use rusqlite::{blob::ZeroBlob, DatabaseName, OptionalExtension, ToSql, Transaction};
 use serde::de::DeserializeOwned;
 
 use super::*;
+
+pub(super) struct Sql {
+    db: Connection,
+}
+
+pub(super) struct Trans<'a> {
+    db: Transaction<'a>,
+}
 
 #[derive(Clone, Copy)]
 enum Table {
@@ -35,8 +43,28 @@ fn get_query(table: Table) -> String {
     format!("SELECT rowid FROM {} WHERE key=?1", table.str())
 }
 
-impl<T> Heap<T> {
-    pub(super) fn create_tables(&self) -> Result<()> {
+fn remove_query(table: Table) -> String {
+    format!("DELETE FROM {} WHERE key=?1", table.str())
+}
+
+impl Sql {
+    pub(super) fn new_in_memory() -> Result<Self> {
+        let myself = Self {
+            db: Connection::open_in_memory()?,
+        };
+        myself.create_tables()?;
+        Ok(myself)
+    }
+
+    pub(super) fn new_from_file(file: impl AsRef<Path>) -> Result<Self> {
+        let myself = Self {
+            db: Connection::open(file)?,
+        };
+        myself.create_tables()?;
+        Ok(myself)
+    }
+
+    fn create_tables(&self) -> Result<()> {
         static CREATE_QUERY: Lazy<String> = Lazy::new(|| {
             let refs = Table::Refs.str();
             let meta = Table::Meta.str();
@@ -48,6 +76,14 @@ impl<T> Heap<T> {
         Ok(self.db.execute_batch(&CREATE_QUERY)?)
     }
 
+    pub(super) fn transaction(&mut self) -> Result<Trans<'_>> {
+        Ok(Trans {
+            db: self.db.transaction()?,
+        })
+    }
+}
+
+impl Trans<'_> {
     fn put_kv<K, V>(&self, put_query: &str, table: Table, key: K, value: V) -> Result<()>
     where
         V: Serialize,
@@ -89,7 +125,15 @@ impl<T> Heap<T> {
         let blob =
             self.db
                 .blob_open(DatabaseName::Main, table.str(), "value", rowid, true)?;
-        Ok(Some(bincode::deserialize_from(blob)?))
+        Ok(Some(bincode::deserialize_from::<_, V>(blob)?))
+    }
+
+    fn remove_kv<K>(&self, remove_query: &str, key: K) -> Result<bool>
+    where
+        K: ToSql,
+    {
+        let affected = self.db.execute(remove_query, (key,))?;
+        Ok(affected > 0)
     }
 
     pub(super) fn put_meta<V>(&self, key: &str, value: V) -> Result<()>
@@ -108,6 +152,11 @@ impl<T> Heap<T> {
         self.get_kv(&GET_QUERY, Table::Meta, key)
     }
 
+    pub(super) fn remove_meta(&self, key: &str) -> Result<bool> {
+        static REMOVE_QUERY: Lazy<String> = Lazy::new(|| remove_query(Table::Meta));
+        self.remove_kv(&REMOVE_QUERY, key)
+    }
+
     pub(super) fn put_refs<V>(&self, key: i64, value: V) -> Result<()>
     where
         V: Serialize,
@@ -123,6 +172,15 @@ impl<T> Heap<T> {
         static GET_QUERY: Lazy<String> = Lazy::new(|| get_query(Table::Refs));
         self.get_kv(&GET_QUERY, Table::Refs, key)
     }
+
+    pub(super) fn remove_refs(&self, key: i64) -> Result<bool> {
+        static REMOVE_QUERY: Lazy<String> = Lazy::new(|| remove_query(Table::Refs));
+        self.remove_kv(&REMOVE_QUERY, key)
+    }
+
+    pub(super) fn commit(self) -> Result<()> {
+        Ok(self.db.commit()?)
+    }
 }
 
 #[cfg(test)]
@@ -131,33 +189,40 @@ mod test {
 
     #[test]
     fn test_meta() {
-        let heap = Heap::<()>::new_in_memory().unwrap();
-        heap.put_meta("asd", 42).unwrap();
-        assert_eq!(42, heap.get_meta("asd").unwrap().unwrap());
+        let mut sql = Sql::new_in_memory().unwrap();
+        let trans = sql.transaction().unwrap();
+        trans.put_meta("asd", 42).unwrap();
+        assert_eq!(42, trans.get_meta("asd").unwrap().unwrap());
 
-        heap.put_meta("omg", 3).unwrap();
-        heap.put_meta("asd", 69).unwrap();
+        trans.put_meta("omg", 3).unwrap();
+        trans.put_meta("asd", 69).unwrap();
 
-        assert_eq!(3, heap.get_meta("omg").unwrap().unwrap());
-        assert_eq!(69, heap.get_meta("asd").unwrap().unwrap());
+        assert_eq!(3, trans.get_meta("omg").unwrap().unwrap());
+        assert_eq!(69, trans.get_meta("asd").unwrap().unwrap());
+
+        assert!(trans.remove_meta("omg").unwrap());
+        assert_eq!(None::<i32>, trans.get_meta("omg").unwrap());
+        assert!(!trans.remove_meta("omg").unwrap());
     }
 
     #[test]
     fn test_refs() {
-        let heap = Heap::<()>::new_in_memory().unwrap();
-        heap.put_refs(1, "omg").unwrap();
-        assert_eq!("omg", heap.get_refs::<String>(1).unwrap().unwrap());
+        let mut sql = Sql::new_in_memory().unwrap();
+        let trans = sql.transaction().unwrap();
+        trans.put_refs(1, "omg").unwrap();
+        assert_eq!("omg", trans.get_refs::<String>(1).unwrap().unwrap());
 
-        heap.put_refs(5, "asd").unwrap();
-        heap.put_refs(1, "qwe").unwrap();
+        trans.put_refs(5, "asd").unwrap();
+        trans.put_refs(1, "qwe").unwrap();
 
-        assert_eq!("asd", heap.get_refs::<String>(5).unwrap().unwrap());
-        assert_eq!("qwe", heap.get_refs::<String>(1).unwrap().unwrap());
+        assert_eq!("asd", trans.get_refs::<String>(5).unwrap().unwrap());
+        assert_eq!("qwe", trans.get_refs::<String>(1).unwrap().unwrap());
     }
 
     #[test]
     fn test_absent() {
-        let heap = Heap::<()>::new_in_memory().unwrap();
-        assert!(heap.get_meta::<()>("asd").unwrap().is_none());
+        let mut sql = Sql::new_in_memory().unwrap();
+        let trans = sql.transaction().unwrap();
+        assert!(trans.get_meta::<()>("asd").unwrap().is_none());
     }
 }

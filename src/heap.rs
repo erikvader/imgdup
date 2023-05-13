@@ -1,11 +1,15 @@
 use std::{collections::HashMap, io, path::Path};
 
+use indexmap::IndexMap;
+use rand::Rng;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+use self::sql::Sql;
 
 mod sql;
 
-type Uuid = u64;
+type Uuid = i64;
 pub type Result<T> = std::result::Result<T, HeapError>;
 
 #[derive(thiserror::Error, Debug)]
@@ -18,15 +22,18 @@ pub enum HeapError {
     IoError(#[from] std::io::Error),
 }
 
-pub struct Heap<T> {
-    refs: HashMap<Uuid, Data<T>>,
+pub struct Heap<T>
+where
+    T: Serialize + DeserializeOwned,
+{
+    refs: IndexMap<Uuid, Data<T>>,
     max_size: usize,
     next_id: Uuid,
     root: Option<Ref>,
-    db: Connection,
+    sql: Sql,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DataState {
     Clean,
     Dirty,
@@ -43,25 +50,31 @@ pub struct Ref {
     id: Uuid,
 }
 
-impl<T> Heap<T> {
-    fn new(db: Connection) -> Result<Self> {
-        let myself = Self {
-            refs: HashMap::new(),
-            next_id: Uuid::min_value(),
-            root: None,
+impl<T> Heap<T>
+where
+    T: Serialize + DeserializeOwned,
+{
+    fn new(mut sql: Sql) -> Result<Self> {
+        let trans = sql.transaction()?;
+        let next_id = trans.get_meta("next_id")?.unwrap_or(Uuid::min_value());
+        let root = trans.get_meta("root")?;
+        drop(trans);
+
+        Ok(Self {
+            refs: IndexMap::new(),
+            next_id,
+            root,
             max_size: 2048,
-            db,
-        };
-        myself.create_tables()?;
-        Ok(myself)
+            sql,
+        })
     }
 
     pub fn new_in_memory() -> Result<Self> {
-        Self::new(Connection::open_in_memory()?)
+        Self::new(Sql::new_in_memory()?)
     }
 
     pub fn new_from_file(file: impl AsRef<Path>) -> Result<Self> {
-        Self::new(Connection::open(file)?)
+        Self::new(Sql::new_from_file(file)?)
     }
 
     pub fn allocate(&mut self) -> Ref {
@@ -78,32 +91,113 @@ impl<T> Heap<T> {
         self.root = Some(root);
     }
 
-    pub fn set(&mut self, r: Ref, data: T) {
-        self.refs.insert(r.id, Data::introduce_new(data));
+    pub fn clear_root(&mut self) {
+        self.root = None;
+    }
+
+    pub fn set(&mut self, r: Ref, data: T) -> Result<()> {
+        self.handle_overflow()?;
+        self.refs.insert(r.id, Data::new_dirty(data));
+        Ok(())
     }
 
     pub fn remove_entry(&mut self, r: Ref) {
-        todo!()
+        if let Some(data) = self.refs.get_mut(&r.id) {
+            data.state = DataState::Remove;
+        }
     }
 
-    pub fn has_value(&self, r: Ref) -> bool {
-        self.deref(r).is_some()
+    pub fn has_value(&mut self, r: Ref) -> Result<bool> {
+        Ok(self.deref(r)?.is_some())
     }
 
-    pub fn deref(&self, r: Ref) -> Option<&T> {
-        todo!()
+    pub fn deref(&mut self, r: Ref) -> Result<Option<&T>> {
+        self.load(r)?;
+        Ok(self.refs.get(&r.id).map(|data| &data.data))
     }
 
-    pub fn deref_mut(&mut self, r: Ref) -> Option<&mut T> {
-        todo!()
+    pub fn deref_mut(&mut self, r: Ref) -> Result<Option<&mut T>> {
+        self.load(r)?;
+        Ok(self.refs.get_mut(&r.id).map(|data| {
+            data.state = DataState::Dirty;
+            &mut data.data
+        }))
+    }
+
+    fn load(&mut self, r: Ref) -> Result<()> {
+        if !self.refs.contains_key(&r.id) {
+            let trans = self.sql.transaction()?;
+            if let Some(val) = trans.get_refs::<T>(r.id)? {
+                drop(trans);
+                self.handle_overflow()?;
+                self.refs.insert(r.id, Data::new_clean(val));
+            }
+        }
+        Ok(())
     }
 
     pub fn flush(&mut self) -> Result<()> {
+        let trans = self.sql.transaction()?;
+        trans.put_meta("next_id", self.next_id)?;
+        trans.put_meta("root", self.root)?;
+
+        for (r, data) in self.refs.iter() {
+            match data.state {
+                DataState::Clean => (),
+                DataState::Dirty => {
+                    trans.put_refs(*r, &data.data)?;
+                }
+                DataState::Remove => {
+                    trans.remove_refs(*r)?;
+                }
+            }
+        }
+
+        trans.commit()?;
+
+        self.refs.retain(|_, data| {
+            if data.state == DataState::Dirty {
+                data.state = DataState::Clean;
+            }
+            data.state != DataState::Remove
+        });
+
+        Ok(())
+    }
+
+    /// Clears space in the cache to make sure that at least one new element can be added
+    /// without becoming bigger than the maximum size.
+    fn handle_overflow(&mut self) -> Result<()> {
+        assert!(self.max_size >= 1);
+        while self.refs.len() >= self.max_size {
+            let r = rand::thread_rng().gen_range(0..self.refs.len());
+
+            if self
+                .refs
+                .get_index(r)
+                .expect("the map is not empty")
+                .1
+                .state
+                != DataState::Clean
+            {
+                self.flush()?;
+                continue;
+            }
+
+            let (_, data) = self
+                .refs
+                .swap_remove_index(r)
+                .expect("the map is not empty");
+            assert!(data.state == DataState::Clean);
+        }
         Ok(())
     }
 }
 
-impl<T> Drop for Heap<T> {
+impl<T> Drop for Heap<T>
+where
+    T: Serialize + DeserializeOwned,
+{
     fn drop(&mut self) {
         self.flush().ok();
     }
@@ -116,14 +210,14 @@ impl Ref {
 }
 
 impl<T> Data<T> {
-    fn introduce_new(data: T) -> Self {
+    fn new_dirty(data: T) -> Self {
         Self {
             data,
             state: DataState::Dirty,
         }
     }
 
-    fn from_file(data: T) -> Self {
+    fn new_clean(data: T) -> Self {
         Self {
             data,
             state: DataState::Clean,
@@ -133,24 +227,24 @@ impl<T> Data<T> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    // use super::*;
 
-    struct List {
-        data: (),
-        child: Option<Ref>,
-    }
+    // struct List {
+    //     data: (),
+    //     child: Option<Ref>,
+    // }
 
-    #[test]
-    fn test() {
-        let mut db = Heap::<List>::new_in_memory().unwrap();
-        // let r = db.new_entry(List{data: (), child: None});
-        // recur(&mut db, r);
-    }
+    // #[test]
+    // fn test() {
+    //     let mut db = Heap::<List>::new_in_memory().unwrap();
+    //     // let r = db.new_entry(List{data: (), child: None});
+    //     // recur(&mut db, r);
+    // }
 
-    fn recur(db: &mut Heap<List>, r: Ref) {
-        let d = db.deref(r).unwrap();
-        if let Some(l) = d.child {
-            recur(db, l);
-        }
-    }
+    // fn recur(db: &mut Heap<List>, r: Ref) {
+    //     let d = db.deref(r).unwrap();
+    //     if let Some(l) = d.child {
+    //         recur(db, l);
+    //     }
+    // }
 }
