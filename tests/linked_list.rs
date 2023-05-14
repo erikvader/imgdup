@@ -122,12 +122,14 @@ fn test_linked_list_remove() -> Result<()> {
 fn test_linked_list_stress() -> Result<()> {
     let tmp_path = tmp_path();
     let mut rng = <rand::rngs::SmallRng as rand::SeedableRng>::seed_from_u64(3);
-    let mut db: Heap<Node> = HeapBuilder::new().with_max_size(10).from_file(&tmp_path)?;
+    let mut db: Heap<Node> = HeapBuilder::new()
+        .with_max_size(1024)
+        .from_file(&tmp_path)?;
 
     let mut list = List::new(db.allocate());
     let mut reference = Vec::<i32>::new();
 
-    for _ in 0..1000 {
+    for _ in 0..1_000 {
         if rng.gen_ratio(1, 3) {
             if !reference.is_empty() {
                 let i = rng.gen_range(0..reference.len());

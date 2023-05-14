@@ -1,10 +1,11 @@
-use std::io::Write;
+use std::{io::Write, path::Path};
 
+use super::Result;
 use once_cell::sync::Lazy;
-use rusqlite::{blob::ZeroBlob, DatabaseName, OptionalExtension, ToSql, Transaction};
-use serde::de::DeserializeOwned;
-
-use super::*;
+use rusqlite::{
+    blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql, Transaction,
+};
+use serde::{de::DeserializeOwned, Serialize};
 
 pub(super) struct Sql {
     db: Connection,
@@ -99,9 +100,8 @@ impl Trans<'_> {
             .try_into()
             .expect("A blob should not be this big anyway");
 
-        let rowid: i64 = self
-            .db
-            .query_row(put_query, (key, ZeroBlob(len)), |row| row.get(0))?;
+        let mut stmt = self.db.prepare_cached(put_query)?;
+        let rowid: i64 = stmt.query_row((key, ZeroBlob(len)), |row| row.get(0))?;
 
         let mut blob =
             self.db
@@ -118,8 +118,8 @@ impl Trans<'_> {
         V: DeserializeOwned,
         K: ToSql,
     {
-        let Some(rowid) = self.db.query_row(
-            get_query,
+        let mut stmt = self.db.prepare_cached(get_query)?;
+        let Some(rowid) = stmt.query_row(
             (key,),
             |row| row.get(0),
         ).optional()? else {
@@ -136,7 +136,8 @@ impl Trans<'_> {
     where
         K: ToSql,
     {
-        let affected = self.db.execute(remove_query, (key,))?;
+        let mut stmt = self.db.prepare_cached(remove_query)?;
+        let affected = stmt.execute((key,))?;
         Ok(affected > 0)
     }
 

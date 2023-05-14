@@ -1,8 +1,6 @@
 use std::path::Path;
 
 use indexmap::IndexMap;
-use rand::Rng;
-use rusqlite::Connection;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use self::sql::Sql;
