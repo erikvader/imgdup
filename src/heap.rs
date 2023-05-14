@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, path::Path};
+use std::path::Path;
 
 use indexmap::IndexMap;
 use rand::Rng;
@@ -56,8 +56,10 @@ where
 {
     fn new(mut sql: Sql) -> Result<Self> {
         let trans = sql.transaction()?;
-        let next_id = trans.get_meta("next_id")?.unwrap_or(Uuid::min_value());
-        let root = trans.get_meta("root")?;
+        let next_id = trans
+            .get_meta::<Uuid>("next_id")?
+            .unwrap_or(Uuid::min_value());
+        let root = trans.get_meta::<Option<Ref>>("root")?.unwrap_or(None);
         drop(trans);
 
         Ok(Self {
@@ -101,10 +103,12 @@ where
         Ok(())
     }
 
-    pub fn remove_entry(&mut self, r: Ref) {
+    pub fn remove_entry(&mut self, r: Ref) -> Result<()> {
+        self.load(r)?;
         if let Some(data) = self.refs.get_mut(&r.id) {
             data.state = DataState::Remove;
         }
+        Ok(())
     }
 
     pub fn has_value(&mut self, r: Ref) -> Result<bool> {
@@ -227,24 +231,40 @@ impl<T> Data<T> {
 
 #[cfg(test)]
 mod test {
-    // use super::*;
+    use super::*;
 
-    // struct List {
-    //     data: (),
-    //     child: Option<Ref>,
-    // }
+    impl<T> Heap<T>
+    where
+        T: Serialize + DeserializeOwned,
+    {
+        pub fn reset(&mut self) -> Result<()> {
+            self.flush()?;
+            self.refs.clear();
+            Ok(())
+        }
 
-    // #[test]
-    // fn test() {
-    //     let mut db = Heap::<List>::new_in_memory().unwrap();
-    //     // let r = db.new_entry(List{data: (), child: None});
-    //     // recur(&mut db, r);
-    // }
+        fn state_of(&self, r: Ref) -> Option<DataState> {
+            self.refs.get(&r.id).map(|d| d.state)
+        }
+    }
 
-    // fn recur(db: &mut Heap<List>, r: Ref) {
-    //     let d = db.deref(r).unwrap();
-    //     if let Some(l) = d.child {
-    //         recur(db, l);
-    //     }
-    // }
+    #[test]
+    fn test_insert() -> Result<()> {
+        let mut db = Heap::<i32>::new_in_memory()?;
+        let r = db.allocate();
+        db.set(r, 5)?;
+        assert_eq!(Some(&5), db.deref(r)?);
+        assert_eq!(Some(DataState::Dirty), db.state_of(r));
+
+        db.reset()?;
+        assert_eq!(None, db.state_of(r));
+        assert_eq!(Some(&5), db.deref(r)?);
+        assert_eq!(Some(DataState::Clean), db.state_of(r));
+
+        assert_eq!(Some(&mut 5), db.deref_mut(r)?);
+        assert_eq!(Some(DataState::Dirty), db.state_of(r));
+
+        assert_eq!(Uuid::min_value() + 1, db.next_id);
+        Ok(())
+    }
 }

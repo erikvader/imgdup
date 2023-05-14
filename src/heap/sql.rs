@@ -29,6 +29,7 @@ impl Table {
     }
 }
 
+// TODO: prepare
 fn put_query(table: Table) -> String {
     format!(
         "INSERT INTO {}(key, value)
@@ -39,10 +40,12 @@ fn put_query(table: Table) -> String {
     )
 }
 
+// TODO: prepare
 fn get_query(table: Table) -> String {
     format!("SELECT rowid FROM {} WHERE key=?1", table.str())
 }
 
+// TODO: prepare
 fn remove_query(table: Table) -> String {
     format!("DELETE FROM {} WHERE key=?1", table.str())
 }
@@ -188,41 +191,44 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_meta() {
-        let mut sql = Sql::new_in_memory().unwrap();
-        let trans = sql.transaction().unwrap();
-        trans.put_meta("asd", 42).unwrap();
-        assert_eq!(42, trans.get_meta("asd").unwrap().unwrap());
+    fn test_meta() -> Result<()> {
+        let mut sql = Sql::new_in_memory()?;
+        let trans = sql.transaction()?;
+        trans.put_meta("asd", 42)?;
+        assert_eq!(42, trans.get_meta("asd")?.unwrap());
 
-        trans.put_meta("omg", 3).unwrap();
-        trans.put_meta("asd", 69).unwrap();
+        trans.put_meta("omg", 3)?;
+        trans.put_meta("asd", 69)?;
 
-        assert_eq!(3, trans.get_meta("omg").unwrap().unwrap());
-        assert_eq!(69, trans.get_meta("asd").unwrap().unwrap());
+        assert_eq!(3, trans.get_meta("omg")?.unwrap());
+        assert_eq!(69, trans.get_meta("asd")?.unwrap());
 
-        assert!(trans.remove_meta("omg").unwrap());
-        assert_eq!(None::<i32>, trans.get_meta("omg").unwrap());
-        assert!(!trans.remove_meta("omg").unwrap());
+        assert!(trans.remove_meta("omg")?);
+        assert_eq!(None::<i32>, trans.get_meta("omg")?);
+        assert!(!trans.remove_meta("omg")?);
+        Ok(())
     }
 
     #[test]
-    fn test_refs() {
-        let mut sql = Sql::new_in_memory().unwrap();
-        let trans = sql.transaction().unwrap();
-        trans.put_refs(1, "omg").unwrap();
-        assert_eq!("omg", trans.get_refs::<String>(1).unwrap().unwrap());
+    fn test_refs() -> Result<()> {
+        let mut sql = Sql::new_in_memory()?;
+        let trans = sql.transaction()?;
+        trans.put_refs(1, "omg")?;
+        assert_eq!("omg", trans.get_refs::<String>(1)?.unwrap());
 
-        trans.put_refs(5, "asd").unwrap();
-        trans.put_refs(1, "qwe").unwrap();
+        trans.put_refs(5, "asd")?;
+        trans.put_refs(1, "qwe")?;
 
-        assert_eq!("asd", trans.get_refs::<String>(5).unwrap().unwrap());
-        assert_eq!("qwe", trans.get_refs::<String>(1).unwrap().unwrap());
+        assert_eq!("asd", trans.get_refs::<String>(5)?.unwrap());
+        assert_eq!("qwe", trans.get_refs::<String>(1)?.unwrap());
+        Ok(())
     }
 
     #[test]
-    fn test_absent() {
-        let mut sql = Sql::new_in_memory().unwrap();
-        let trans = sql.transaction().unwrap();
-        assert!(trans.get_meta::<()>("asd").unwrap().is_none());
+    fn test_absent() -> Result<()> {
+        let mut sql = Sql::new_in_memory()?;
+        let trans = sql.transaction()?;
+        assert!(trans.get_meta::<()>("asd")?.is_none());
+        Ok(())
     }
 }
