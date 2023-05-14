@@ -29,7 +29,6 @@ impl Table {
     }
 }
 
-// TODO: prepare
 fn put_query(table: Table) -> String {
     format!(
         "INSERT INTO {}(key, value)
@@ -40,14 +39,16 @@ fn put_query(table: Table) -> String {
     )
 }
 
-// TODO: prepare
 fn get_query(table: Table) -> String {
     format!("SELECT rowid FROM {} WHERE key=?1", table.str())
 }
 
-// TODO: prepare
 fn remove_query(table: Table) -> String {
     format!("DELETE FROM {} WHERE key=?1", table.str())
+}
+
+fn count_query(table: Table) -> String {
+    format!("SELECT COUNT(*) FROM {}", table.str())
 }
 
 impl Sql {
@@ -184,6 +185,12 @@ impl Trans<'_> {
     pub(super) fn commit(self) -> Result<()> {
         Ok(self.db.commit()?)
     }
+
+    pub(super) fn count_refs(&self) -> Result<usize> {
+        static COUNT_QUERY: Lazy<String> = Lazy::new(|| count_query(Table::Refs));
+        let count = self.db.query_row(&COUNT_QUERY, (), |row| row.get(0))?;
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
@@ -221,6 +228,14 @@ mod test {
 
         assert_eq!("asd", trans.get_refs::<String>(5)?.unwrap());
         assert_eq!("qwe", trans.get_refs::<String>(1)?.unwrap());
+
+        assert_eq!(2, trans.count_refs()?);
+
+        trans.remove_refs(5)?;
+        assert_eq!(1, trans.count_refs()?);
+
+        trans.remove_refs(1)?;
+        assert_eq!(0, trans.count_refs()?);
         Ok(())
     }
 
