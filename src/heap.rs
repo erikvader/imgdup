@@ -5,6 +5,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use self::sql::Sql;
 
+mod priority_queue;
 mod sql;
 
 type Uuid = i64;
