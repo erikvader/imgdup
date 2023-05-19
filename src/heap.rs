@@ -25,7 +25,7 @@ pub struct Heap<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    refs: IndexMap<Uuid, Data<T>>,
+    refs: IndexMap<Ref, Data<T>>,
     max_size: usize,
     next_id: Uuid,
     root: Ref,
@@ -44,7 +44,7 @@ struct Data<T> {
     data: T,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Ref {
     id: Uuid,
 }
@@ -83,13 +83,11 @@ impl<T> Heap<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    fn new(mut sql: Sql, max_size: usize) -> Result<Self> {
-        let trans = sql.transaction()?;
-        let next_id = trans
+    fn new(sql: Sql, max_size: usize) -> Result<Self> {
+        let next_id = sql
             .get_meta::<Uuid>("next_id")?
             .unwrap_or(Uuid::min_value());
-        let root = trans.get_meta::<Ref>("root")?.unwrap_or(Ref::null());
-        drop(trans);
+        let root = sql.get_meta::<Ref>("root")?.unwrap_or(Ref::null());
 
         Ok(Self {
             refs: IndexMap::with_capacity(max_size),
@@ -128,19 +126,19 @@ where
 
     pub fn count_refs(&mut self) -> Result<usize> {
         self.flush()?;
-        self.sql.transaction()?.count_refs()
+        self.sql.count_refs()
     }
 
     pub fn set(&mut self, r: Ref, data: T) -> Result<()> {
         assert!(!r.is_null());
         self.handle_overflow()?;
-        self.refs.insert(r.id, Data::new_dirty(data));
+        self.refs.insert(r, Data::new_dirty(data));
         Ok(())
     }
 
     pub fn remove_entry(&mut self, r: Ref) -> Result<()> {
         self.load(r)?;
-        if let Some(data) = self.refs.get_mut(&r.id) {
+        if let Some(data) = self.refs.get_mut(&r) {
             data.state = DataState::Remove;
         }
         Ok(())
@@ -152,47 +150,52 @@ where
 
     pub fn deref(&mut self, r: Ref) -> Result<Option<&T>> {
         self.load(r)?;
-        Ok(self.refs.get(&r.id).map(|data| &data.data))
+        Ok(self
+            .refs
+            .get(&r)
+            .filter(|data| data.state != DataState::Remove)
+            .map(|data| &data.data))
     }
 
     pub fn deref_mut(&mut self, r: Ref) -> Result<Option<&mut T>> {
         self.load(r)?;
-        Ok(self.refs.get_mut(&r.id).map(|data| {
-            data.state = DataState::Dirty;
-            &mut data.data
-        }))
+        Ok(self
+            .refs
+            .get_mut(&r)
+            .filter(|data| data.state != DataState::Remove)
+            .map(|data| {
+                data.state = DataState::Dirty;
+                &mut data.data
+            }))
     }
 
     fn load(&mut self, r: Ref) -> Result<()> {
-        if !r.is_null() && !self.refs.contains_key(&r.id) {
-            let trans = self.sql.transaction()?;
-            if let Some(val) = trans.get_refs::<T>(r.id)? {
-                drop(trans);
+        if !r.is_null() && !self.refs.contains_key(&r) {
+            if let Some(val) = self.sql.get_refs::<T>(r.id)? {
                 self.handle_overflow()?;
-                self.refs.insert(r.id, Data::new_clean(val));
+                self.refs.insert(r, Data::new_clean(val));
             }
         }
         Ok(())
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        let trans = self.sql.transaction()?;
-        trans.put_meta("next_id", self.next_id)?;
-        trans.put_meta("root", self.root)?;
+        self.sql.put_meta("next_id", self.next_id)?;
+        self.sql.put_meta("root", self.root)?;
 
         for (r, data) in self.refs.iter() {
             match data.state {
                 DataState::Clean => (),
                 DataState::Dirty => {
-                    trans.put_refs(*r, &data.data)?;
+                    self.sql.put_refs(r.id, &data.data)?;
                 }
                 DataState::Remove => {
-                    trans.remove_refs(*r)?;
+                    self.sql.remove_refs(r.id)?;
                 }
             }
         }
 
-        trans.commit()?;
+        self.sql.commit()?;
 
         self.refs.retain(|_, data| {
             if data.state == DataState::Dirty {
@@ -287,7 +290,7 @@ mod test {
         }
 
         fn state_of(&self, r: Ref) -> Option<DataState> {
-            self.refs.get(&r.id).map(|d| d.state)
+            self.refs.get(&r).map(|d| d.state)
         }
     }
 
@@ -308,6 +311,13 @@ mod test {
         assert_eq!(Some(DataState::Dirty), db.state_of(r));
 
         assert_eq!(Uuid::min_value() + 1, db.next_id);
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove() -> Result<()> {
+        let mut db = Heap::<i32>::new_in_memory()?;
+        // TODO: testa att det inte går att hämta saker som är borttagna bland annat
         Ok(())
     }
 }

@@ -2,17 +2,11 @@ use std::{io::Write, path::Path};
 
 use super::Result;
 use once_cell::sync::Lazy;
-use rusqlite::{
-    blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql, Transaction,
-};
+use rusqlite::{blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql};
 use serde::{de::DeserializeOwned, Serialize};
 
 pub(super) struct Sql {
     db: Connection,
-}
-
-pub(super) struct Trans<'a> {
-    db: Transaction<'a>,
 }
 
 #[derive(Clone, Copy)]
@@ -57,7 +51,7 @@ impl Sql {
         let myself = Self {
             db: Connection::open_in_memory()?,
         };
-        myself.create_tables()?;
+        myself.init_db()?;
         Ok(myself)
     }
 
@@ -65,30 +59,27 @@ impl Sql {
         let myself = Self {
             db: Connection::open(file)?,
         };
-        myself.create_tables()?;
+        myself.init_db()?;
         Ok(myself)
     }
 
-    fn create_tables(&self) -> Result<()> {
-        static CREATE_QUERY: Lazy<String> = Lazy::new(|| {
-            let refs = Table::Refs.str();
-            let meta = Table::Meta.str();
-            format!(
-                "CREATE TABLE IF NOT EXISTS {refs}(key INTEGER PRIMARY KEY, value BLOB NOT NULL) STRICT;
-                 CREATE TABLE IF NOT EXISTS {meta}(key TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT;"
-            )
-        });
-        Ok(self.db.execute_batch(&CREATE_QUERY)?)
+    fn init_db(&self) -> Result<()> {
+        let refs = Table::Refs.str();
+        let meta = Table::Meta.str();
+        let query = format!(
+            // NOTE: These pragmas will enable a write-ahead log without a shared memory
+            // file (locking_mode=EXCLUSIVE) and no fsync on the wal-file
+            // (synchronous=NORMAL). The writes will only be fsynced into the database
+            // when the wal gets too big or when the connection is closed.
+            "PRAGMA synchronous=NORMAL;
+             PRAGMA locking_mode=EXCLUSIVE;
+             PRAGMA journal_mode=WAL;
+             CREATE TABLE IF NOT EXISTS {refs}(key INTEGER PRIMARY KEY, value BLOB NOT NULL) STRICT;
+             CREATE TABLE IF NOT EXISTS {meta}(key TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT;"
+            );
+        Ok(self.db.execute_batch(&query)?)
     }
 
-    pub(super) fn transaction(&mut self) -> Result<Trans<'_>> {
-        Ok(Trans {
-            db: self.db.transaction()?,
-        })
-    }
-}
-
-impl Trans<'_> {
     fn put_kv<K, V>(&self, put_query: &str, table: Table, key: K, value: V) -> Result<()>
     where
         V: Serialize,
@@ -183,14 +174,25 @@ impl Trans<'_> {
         self.remove_kv(&REMOVE_QUERY, key)
     }
 
-    pub(super) fn commit(self) -> Result<()> {
-        Ok(self.db.commit()?)
-    }
-
     pub(super) fn count_refs(&self) -> Result<usize> {
         static COUNT_QUERY: Lazy<String> = Lazy::new(|| count_query(Table::Refs));
         let count = self.db.query_row(&COUNT_QUERY, (), |row| row.get(0))?;
         Ok(count)
+    }
+
+    pub(super) fn begin(&self) -> Result<()> {
+        self.db.execute("BEGIN", ())?;
+        Ok(())
+    }
+
+    pub(super) fn rollback(&self) -> Result<()> {
+        self.db.execute("ROLLBACK", ())?;
+        Ok(())
+    }
+
+    pub(super) fn commit(&self) -> Result<()> {
+        self.db.execute("COMMIT", ())?;
+        Ok(())
     }
 }
 
@@ -201,50 +203,47 @@ mod test {
     #[test]
     fn test_meta() -> Result<()> {
         let mut sql = Sql::new_in_memory()?;
-        let trans = sql.transaction()?;
-        trans.put_meta("asd", 42)?;
-        assert_eq!(42, trans.get_meta("asd")?.unwrap());
+        sql.put_meta("asd", 42)?;
+        assert_eq!(42, sql.get_meta("asd")?.unwrap());
 
-        trans.put_meta("omg", 3)?;
-        trans.put_meta("asd", 69)?;
+        sql.put_meta("omg", 3)?;
+        sql.put_meta("asd", 69)?;
 
-        assert_eq!(3, trans.get_meta("omg")?.unwrap());
-        assert_eq!(69, trans.get_meta("asd")?.unwrap());
+        assert_eq!(3, sql.get_meta("omg")?.unwrap());
+        assert_eq!(69, sql.get_meta("asd")?.unwrap());
 
-        assert!(trans.remove_meta("omg")?);
-        assert_eq!(None::<i32>, trans.get_meta("omg")?);
-        assert!(!trans.remove_meta("omg")?);
+        assert!(sql.remove_meta("omg")?);
+        assert_eq!(None::<i32>, sql.get_meta("omg")?);
+        assert!(!sql.remove_meta("omg")?);
         Ok(())
     }
 
     #[test]
     fn test_refs() -> Result<()> {
         let mut sql = Sql::new_in_memory()?;
-        let trans = sql.transaction()?;
-        trans.put_refs(1, "omg")?;
-        assert_eq!("omg", trans.get_refs::<String>(1)?.unwrap());
+        sql.put_refs(1, "omg")?;
+        assert_eq!("omg", sql.get_refs::<String>(1)?.unwrap());
 
-        trans.put_refs(5, "asd")?;
-        trans.put_refs(1, "qwe")?;
+        sql.put_refs(5, "asd")?;
+        sql.put_refs(1, "qwe")?;
 
-        assert_eq!("asd", trans.get_refs::<String>(5)?.unwrap());
-        assert_eq!("qwe", trans.get_refs::<String>(1)?.unwrap());
+        assert_eq!("asd", sql.get_refs::<String>(5)?.unwrap());
+        assert_eq!("qwe", sql.get_refs::<String>(1)?.unwrap());
 
-        assert_eq!(2, trans.count_refs()?);
+        assert_eq!(2, sql.count_refs()?);
 
-        trans.remove_refs(5)?;
-        assert_eq!(1, trans.count_refs()?);
+        sql.remove_refs(5)?;
+        assert_eq!(1, sql.count_refs()?);
 
-        trans.remove_refs(1)?;
-        assert_eq!(0, trans.count_refs()?);
+        sql.remove_refs(1)?;
+        assert_eq!(0, sql.count_refs()?);
         Ok(())
     }
 
     #[test]
     fn test_absent() -> Result<()> {
         let mut sql = Sql::new_in_memory()?;
-        let trans = sql.transaction()?;
-        assert!(trans.get_meta::<()>("asd")?.is_none());
+        assert!(sql.get_meta::<()>("asd")?.is_none());
         Ok(())
     }
 }
