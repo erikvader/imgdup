@@ -18,6 +18,10 @@ impl<K, T> PriorityQueue<K, T> {
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    pub fn iter(&self) -> indexmap::map::Values<'_, K, T> {
+        self.inner.values()
+    }
 }
 
 impl<K, T> PriorityQueue<K, T>
@@ -63,6 +67,14 @@ where
             None
         }
     }
+
+    pub fn retain<F>(&mut self, mut modifier: F)
+    where
+        F: FnMut(&mut T) -> bool,
+    {
+        self.inner.retain(|_, v| modifier(v));
+        self.bubble_all();
+    }
 }
 
 impl<K, T> PriorityQueue<K, T>
@@ -75,14 +87,6 @@ where
             self.bubble_down(0);
         }
         root
-    }
-
-    pub fn modify_all<F>(&mut self, mut modifier: F)
-    where
-        F: FnMut(&mut T),
-    {
-        self.inner.iter_mut().for_each(|(_, val)| modifier(val));
-        self.bubble_all();
     }
 
     fn bubble_up(&mut self, i: usize) {
@@ -143,24 +147,52 @@ fn right_child_index(i: usize) -> Option<usize> {
 mod test {
     use super::*;
 
-    fn pop_all<K, T>(que: &mut PriorityQueue<K, T>) -> Vec<T>
+    impl<K, T> PriorityQueue<K, T>
     where
         T: Ord,
     {
-        let mut v = Vec::new();
-        while let Some((_, x)) = que.pop() {
-            v.push(x);
+        fn pop_all(&mut self) -> Vec<T> {
+            let mut v = Vec::new();
+            while let Some((_, x)) = self.pop() {
+                v.push(x);
+            }
+            v
         }
-        v
+
+        fn invariant_holds(&self) -> bool {
+            for i in 0..self.inner.len() {
+                if let Some(parent) = parent_index(i) {
+                    if self.inner[parent] > self.inner[i] {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
     }
 
-    fn push_all<T, I>(que: &mut PriorityQueue<usize, T>, iter: I)
+    impl<T> PriorityQueue<usize, T>
     where
         T: Ord,
-        I: IntoIterator<Item = T>,
     {
-        for (i, t) in iter.into_iter().enumerate() {
-            que.push(i, t);
+        fn push_all<I>(&mut self, iter: I)
+        where
+            I: IntoIterator<Item = T>,
+        {
+            for (i, t) in iter.into_iter().enumerate() {
+                self.push(i, t);
+            }
+        }
+    }
+
+    impl<K, T> PriorityQueue<K, T>
+    where
+        T: Clone + Ord,
+    {
+        fn pop_all_cloned(&self) -> Vec<T> {
+            let mut elements: Vec<T> = self.iter().cloned().collect();
+            elements.sort();
+            elements
         }
     }
 
@@ -191,15 +223,56 @@ mod test {
     fn duplicates() {
         let mut que = PriorityQueue::<i32, i32>::new();
         assert_eq!(None, que.push(1, 1));
-        assert_eq!(Some(1), que.push(1, 1));
-        assert_eq!(Some((1, 1)), que.pop());
-        assert_eq!(None, que.push(1, 1));
+        assert_eq!(Some(1), que.push(1, 2));
+        assert_eq!(Some((1, 2)), que.pop());
+        assert_eq!(None, que.push(1, 3));
     }
 
     #[test]
     fn sort() {
         let mut que = PriorityQueue::<usize, i32>::new();
-        push_all(&mut que, [4, 1, 8, 6, 4, 6, 6, 1]);
-        assert_eq!(vec![1, 1, 4, 4, 6, 6, 6, 8], pop_all(&mut que));
+        que.push_all([4, 1, 8, 6, 4, 6, 6, 1]);
+        assert!(que.invariant_holds());
+        assert_eq!(vec![1, 1, 4, 4, 6, 6, 6, 8], que.pop_all());
+    }
+
+    #[test]
+    fn retain() {
+        let mut que = PriorityQueue::<usize, i32>::new();
+        assert!(que.invariant_holds());
+        que.push_all([4, 1, 8, 6, 4, 6, 6, 1]);
+        assert!(que.invariant_holds());
+        que.retain(|x| {
+            *x = 5 - *x;
+            *x >= 0
+        });
+        assert!(que.invariant_holds());
+        assert_eq!(vec![1, 1, 4, 4], que.pop_all());
+        assert!(que.invariant_holds());
+    }
+
+    #[test]
+    fn modify() {
+        let mut que = PriorityQueue::<usize, i32>::new();
+        que.push_all([9, 8, 7, 6, 5, 4, 3, 2, 1]);
+
+        assert!(que.invariant_holds());
+        let elements = que.pop_all_cloned();
+        assert_eq!(vec![1, 2, 3, 4, 5, 6, 7, 8, 9i32], elements);
+
+        que.modify(&1, |_| ());
+        assert!(que.invariant_holds());
+        let elements = que.pop_all_cloned();
+        assert_eq!(vec![1, 2, 3, 4, 5, 6, 7, 8, 9i32], elements);
+
+        que.modify(&1, |eight| *eight = 0);
+        assert!(que.invariant_holds());
+        let elements = que.pop_all_cloned();
+        assert_eq!(vec![0, 1, 2, 3, 4, 5, 6, 7, 9i32], elements);
+
+        que.modify(&1, |zero| *zero = 8);
+        assert!(que.invariant_holds());
+        let elements = que.pop_all_cloned();
+        assert_eq!(vec![1, 2, 3, 4, 5, 6, 7, 8, 9i32], elements);
     }
 }
