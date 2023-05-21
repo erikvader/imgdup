@@ -3,7 +3,7 @@ use std::path::Path;
 use indexmap::IndexMap;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use self::sql::Sql;
+use self::{priority_queue::PriorityQueue, sql::Sql};
 
 mod priority_queue;
 mod sql;
@@ -21,15 +21,20 @@ pub enum HeapError {
     IoError(#[from] std::io::Error),
 }
 
-pub struct Heap<T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    refs: IndexMap<Ref, Data<T>>,
-    max_size: usize,
+pub struct Heap<T> {
+    cache: PriorityQueue<Ref, Data<T>>,
+    dirty_changes: usize,
+    cache_age: usize,
+    sql: Sql,
+    config: Config,
+    // -- saved in db --
     next_id: Uuid,
     root: Ref,
-    sql: Sql,
+}
+
+struct Config {
+    cache_capacity: usize,
+    dirtyness_limit: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +46,7 @@ enum DataState {
 
 struct Data<T> {
     state: DataState,
+    access_count: usize,
     data: T,
 }
 
@@ -50,17 +56,28 @@ pub struct Ref {
 }
 
 pub struct HeapBuilder {
-    max_size: usize,
+    config: Config,
 }
 
 impl HeapBuilder {
     pub fn new() -> Self {
-        Self { max_size: 2048 }
+        Self {
+            config: Config {
+                cache_capacity: 2048,
+                dirtyness_limit: 128,
+            },
+        }
     }
 
-    pub fn with_max_size(mut self, max_size: usize) -> Self {
-        assert!(max_size >= 1);
-        self.max_size = max_size;
+    pub fn with_cache_capacity(mut self, cache_capacity: usize) -> Self {
+        assert!(cache_capacity >= 1);
+        self.config.cache_capacity = cache_capacity;
+        self
+    }
+
+    pub fn with_dirtyness_limit(mut self, dirtyness_limit: usize) -> Self {
+        assert!(dirtyness_limit >= 1);
+        self.config.dirtyness_limit = dirtyness_limit;
         self
     }
 
@@ -68,14 +85,14 @@ impl HeapBuilder {
     where
         T: Serialize + DeserializeOwned,
     {
-        Heap::new(Sql::new_in_memory()?, self.max_size)
+        Heap::new(Sql::new_in_memory()?, self.config)
     }
 
     pub fn from_file<T>(self, file: impl AsRef<Path>) -> Result<Heap<T>>
     where
         T: Serialize + DeserializeOwned,
     {
-        Heap::new(Sql::new_from_file(file)?, self.max_size)
+        Heap::new(Sql::new_from_file(file)?, self.config)
     }
 }
 
@@ -83,17 +100,21 @@ impl<T> Heap<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    fn new(sql: Sql, max_size: usize) -> Result<Self> {
+    fn new(sql: Sql, config: Config) -> Result<Self> {
         let next_id = sql
             .get_meta::<Uuid>("next_id")?
             .unwrap_or(Uuid::min_value());
         let root = sql.get_meta::<Ref>("root")?.unwrap_or(Ref::null());
 
+        sql.begin()?;
+
         Ok(Self {
-            refs: IndexMap::with_capacity(max_size),
+            cache: PriorityQueue::with_capacity(config.cache_capacity),
+            dirty_changes: 0,
+            cache_age: 0,
             next_id,
             root,
-            max_size,
+            config,
             sql,
         })
     }
@@ -124,6 +145,7 @@ where
         self.root = Ref::null();
     }
 
+    // NOTE: for testing
     pub fn count_refs(&mut self) -> Result<usize> {
         self.flush()?;
         self.sql.count_refs()
@@ -132,15 +154,27 @@ where
     pub fn set(&mut self, r: Ref, data: T) -> Result<()> {
         assert!(!r.is_null());
         self.handle_overflow()?;
-        self.refs.insert(r, Data::new_dirty(data));
+        let oldval = self.cache.push(r, Data::new_dirty(data, self.cache_age));
+        match oldval {
+            None
+            | Some(Data {
+                state: DataState::Clean,
+                ..
+            }) => {
+                self.dirty_changes += 1;
+            }
+            _ => (),
+        }
         Ok(())
     }
 
     pub fn remove_entry(&mut self, r: Ref) -> Result<()> {
         self.load(r)?;
-        if let Some(data) = self.refs.get_mut(&r) {
+        // NOTE: not ordered by state
+        self.cache.modify_unchecked(&r, |data| {
             data.state = DataState::Remove;
-        }
+            self.dirty_changes += 1;
+        });
         Ok(())
     }
 
@@ -150,8 +184,9 @@ where
 
     pub fn deref(&mut self, r: Ref) -> Result<Option<&T>> {
         self.load(r)?;
+        self.cache.modify(&r, |data| data.access_count += 1);
         Ok(self
-            .refs
+            .cache
             .get(&r)
             .filter(|data| data.state != DataState::Remove)
             .map(|data| &data.data))
@@ -159,21 +194,26 @@ where
 
     pub fn deref_mut(&mut self, r: Ref) -> Result<Option<&mut T>> {
         self.load(r)?;
+        self.cache.modify(&r, |data| {
+            data.state = DataState::Dirty;
+            data.access_count += 1;
+            self.dirty_changes += 1;
+        });
         Ok(self
-            .refs
-            .get_mut(&r)
+            .cache
+            .get_mut_unchecked(&r)
             .filter(|data| data.state != DataState::Remove)
-            .map(|data| {
-                data.state = DataState::Dirty;
-                &mut data.data
-            }))
+            // NOTE: modifying data.data will not change the access_count, i.e., modify
+            // the ordering of data and destroy the heap.
+            .map(|data| &mut data.data))
     }
 
     fn load(&mut self, r: Ref) -> Result<()> {
-        if !r.is_null() && !self.refs.contains_key(&r) {
+        if !r.is_null() && !self.cache.contains_key(&r) {
             if let Some(val) = self.sql.get_refs::<T>(r.id)? {
                 self.handle_overflow()?;
-                self.refs.insert(r, Data::new_clean(val));
+                let oldval = self.cache.push(r, Data::new_clean(val, self.cache_age));
+                assert!(oldval.is_none());
             }
         }
         Ok(())
@@ -183,7 +223,7 @@ where
         self.sql.put_meta("next_id", self.next_id)?;
         self.sql.put_meta("root", self.root)?;
 
-        for (r, data) in self.refs.iter() {
+        for (r, data) in self.cache.iter() {
             match data.state {
                 DataState::Clean => (),
                 DataState::Dirty => {
@@ -196,52 +236,54 @@ where
         }
 
         self.sql.commit()?;
+        self.sql.begin()?;
 
-        self.refs.retain(|_, data| {
+        self.cache.retain(|data| {
             if data.state == DataState::Dirty {
                 data.state = DataState::Clean;
             }
             data.state != DataState::Remove
         });
+        self.dirty_changes = 0;
 
+        Ok(())
+    }
+
+    pub fn checkpoint(&mut self) -> Result<()> {
+        if self.dirty_changes >= self.config.dirtyness_limit {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    pub fn close(mut self) -> Result<()> {
+        self.flush()?;
+        self.sql.close()?;
         Ok(())
     }
 
     /// Clears space in the cache to make sure that at least one new element can be added
     /// without becoming bigger than the maximum size.
     fn handle_overflow(&mut self) -> Result<()> {
-        assert!(self.max_size >= 1);
-        while self.refs.len() >= self.max_size {
-            let r = 0; // rand::thread_rng().gen_range(0..self.refs.len());
+        assert!(self.config.cache_capacity >= 1);
+        while self.cache.len() >= self.config.cache_capacity {
+            // TODO: if the ref count overflows, then halve (or something) all
+            // access_counts in the cache. But that will probably never happen since a
+            // usize is pretty big.
+            let (r, min) = self.cache.pop().expect("the cache is not empty");
+            self.cache_age = min.access_count;
 
-            if self
-                .refs
-                .get_index(r)
-                .expect("the map is not empty")
-                .1
-                .state
-                != DataState::Clean
-            {
-                self.flush()?;
-                continue;
+            match min.state {
+                DataState::Clean => (),
+                DataState::Remove => {
+                    self.sql.remove_refs(r.id)?;
+                }
+                DataState::Dirty => {
+                    self.sql.put_refs(r.id, min.data)?;
+                }
             }
-
-            let (_, data) = self
-                .refs
-                .swap_remove_index(r)
-                .expect("the map is not empty");
-            assert!(data.state == DataState::Clean);
         }
         Ok(())
-    }
-}
-
-impl<T> Drop for Heap<T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    fn drop(&mut self) {
-        self.flush().ok();
     }
 }
 
@@ -260,18 +302,37 @@ impl Ref {
 }
 
 impl<T> Data<T> {
-    fn new_dirty(data: T) -> Self {
+    fn new_dirty(data: T, access_count: usize) -> Self {
         Self {
             data,
             state: DataState::Dirty,
+            access_count,
         }
     }
 
-    fn new_clean(data: T) -> Self {
+    fn new_clean(data: T, access_count: usize) -> Self {
         Self {
             data,
             state: DataState::Clean,
+            access_count,
         }
+    }
+}
+
+impl<T> PartialEq for Data<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.access_count.eq(&other.access_count)
+    }
+}
+impl<T> Eq for Data<T> {}
+impl<T> PartialOrd for Data<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.access_count.partial_cmp(&other.access_count)
+    }
+}
+impl<T> Ord for Data<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.access_count.cmp(&other.access_count)
     }
 }
 
@@ -285,12 +346,12 @@ mod test {
     {
         pub fn reset(&mut self) -> Result<()> {
             self.flush()?;
-            self.refs.clear();
+            self.cache.clear();
             Ok(())
         }
 
         fn state_of(&self, r: Ref) -> Option<DataState> {
-            self.refs.get(&r).map(|d| d.state)
+            self.cache.get(&r).map(|d| d.state)
         }
     }
 

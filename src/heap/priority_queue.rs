@@ -11,16 +11,30 @@ impl<K, T> PriorityQueue<K, T> {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: IndexMap::with_capacity(capacity),
+        }
+    }
+
     pub fn peek(&self) -> Option<(&K, &T)> {
         self.inner.first()
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
     }
 
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
-    pub fn iter(&self) -> indexmap::map::Values<'_, K, T> {
-        self.inner.values()
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn iter(&self) -> indexmap::map::Iter<'_, K, T> {
+        self.inner.iter()
     }
 }
 
@@ -53,6 +67,21 @@ where
         }
     }
 
+    /// Do not modify T in such a way that it changes its ordering, use `modify` if the
+    /// ordering can change.
+    pub fn modify_unchecked<F, Q>(&mut self, key: &Q, modifier: F) -> bool
+    where
+        F: FnOnce(&mut T),
+        Q: std::borrow::Borrow<K>,
+    {
+        if let Some(v) = self.inner.get_mut(key.borrow()) {
+            modifier(v);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn remove<Q>(&mut self, key: &Q) -> Option<(K, T)>
     where
         Q: std::borrow::Borrow<K>,
@@ -74,6 +103,34 @@ where
     {
         self.inner.retain(|_, v| modifier(v));
         self.bubble_all();
+    }
+}
+
+impl<K, T> PriorityQueue<K, T>
+where
+    K: core::hash::Hash + Eq,
+{
+    pub fn get<Q>(&self, key: &Q) -> Option<&T>
+    where
+        Q: std::borrow::Borrow<K>,
+    {
+        self.inner.get(key.borrow())
+    }
+
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        Q: std::borrow::Borrow<K>,
+    {
+        self.inner.contains_key(key.borrow())
+    }
+
+    /// Do not modify T in such a way that it changes its ordering, use `modify` if the
+    /// ordering can change.
+    pub fn get_mut_unchecked<Q>(&mut self, key: &Q) -> Option<&mut T>
+    where
+        Q: std::borrow::Borrow<K>,
+    {
+        self.inner.get_mut(key.borrow())
     }
 }
 
@@ -190,7 +247,7 @@ mod test {
         T: Clone + Ord,
     {
         fn pop_all_cloned(&self) -> Vec<T> {
-            let mut elements: Vec<T> = self.iter().cloned().collect();
+            let mut elements: Vec<T> = self.iter().map(|(_, v)| v).cloned().collect();
             elements.sort();
             elements
         }

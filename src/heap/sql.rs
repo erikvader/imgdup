@@ -194,6 +194,10 @@ impl Sql {
         self.db.execute("COMMIT", ())?;
         Ok(())
     }
+
+    pub(super) fn close(self) -> Result<()> {
+        self.db.close().map_err(|(_, e)| e.into())
+    }
 }
 
 #[cfg(test)]

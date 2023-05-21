@@ -74,14 +74,13 @@ fn test_write_to_file() -> Result<()> {
     let next = db.allocate();
     db.set(r1, Node::new(5, next))?;
     db.set_root(r1);
-    db.flush()?;
-    drop(db);
+    db.close()?;
 
     let mut db = Heap::<Node>::new_from_file(&tmp_path)?;
     let r2 = db.root();
     assert_eq!(r1, r2);
     assert_eq!(Some(5), db.deref(r2)?.map(|l| l.data));
-    drop(db);
+    db.close()?;
 
     Ok(())
 }
@@ -123,13 +122,13 @@ fn test_linked_list_stress() -> Result<()> {
     let tmp_path = tmp_path();
     let mut rng = <rand::rngs::SmallRng as rand::SeedableRng>::seed_from_u64(3);
     let mut db: Heap<Node> = HeapBuilder::new()
-        .with_max_size(1024)
+        .with_cache_capacity(1024)
         .from_file(&tmp_path)?;
 
     let mut list = List::new(db.allocate());
     let mut reference = Vec::<i32>::new();
 
-    for _ in 0..1_000 {
+    for i in 0..1_000 {
         if rng.gen_ratio(1, 3) {
             if !reference.is_empty() {
                 let i = rng.gen_range(0..reference.len());
@@ -143,12 +142,21 @@ fn test_linked_list_stress() -> Result<()> {
             reference.push(to_add);
             list.add(&mut db, to_add)?;
         }
+
+        if i % 10 == 0 {
+            db.checkpoint()?;
+        }
     }
 
     assert_eq!(reference.len(), db.count_refs()?);
     assert_eq!(reference, list.to_vec(&mut db)?);
 
     Ok(())
+}
+
+#[test]
+fn test_linked_list_crash() -> Result<()> {
+    Ok(()) // TODO:
 }
 
 fn remove_first(vec: &mut Vec<i32>, remove: i32) {
