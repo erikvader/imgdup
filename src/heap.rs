@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use indexmap::IndexMap;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use self::{priority_queue::PriorityQueue, sql::Sql};
@@ -9,6 +8,9 @@ mod priority_queue;
 mod sql;
 
 type Uuid = i64;
+const UUID_FIRST: Uuid = 0;
+const UUID_NULL: Uuid = Uuid::min_value();
+
 pub type Result<T> = std::result::Result<T, HeapError>;
 
 #[derive(thiserror::Error, Debug)]
@@ -19,10 +21,12 @@ pub enum HeapError {
     Bincode(#[from] bincode::Error),
     #[error("IO Error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Ref does not exist: {0:?}")]
+    RefNotExists(Ref),
 }
 
 pub struct Heap<T> {
-    cache: PriorityQueue<Ref, Data<T>>,
+    cache: PriorityQueue<Uuid, Block<T>>,
     dirty_changes: usize,
     cache_age: usize,
     sql: Sql,
@@ -35,24 +39,25 @@ pub struct Heap<T> {
 struct Config {
     cache_capacity: usize,
     dirtyness_limit: usize,
+    maximum_block_size: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DataState {
+enum BlockState {
     Clean,
     Dirty,
-    Remove,
 }
 
-struct Data<T> {
-    state: DataState,
+struct Block<T> {
+    state: BlockState,
     access_count: usize,
-    data: T,
+    data: Vec<(Uuid, T)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Ref {
-    id: Uuid,
+    block_id: Uuid,
+    sub_id: Uuid,
 }
 
 pub struct HeapBuilder {
@@ -65,6 +70,7 @@ impl HeapBuilder {
             config: Config {
                 cache_capacity: 2048,
                 dirtyness_limit: 128,
+                maximum_block_size: 10,
             },
         }
     }
@@ -78,6 +84,12 @@ impl HeapBuilder {
     pub fn with_dirtyness_limit(mut self, dirtyness_limit: usize) -> Self {
         assert!(dirtyness_limit >= 1);
         self.config.dirtyness_limit = dirtyness_limit;
+        self
+    }
+
+    pub fn with_maximum_block_size(mut self, maximum_block_size: usize) -> Self {
+        assert!(maximum_block_size >= 1);
+        self.config.maximum_block_size = maximum_block_size;
         self
     }
 
@@ -101,9 +113,7 @@ where
     T: Serialize + DeserializeOwned,
 {
     fn new(sql: Sql, config: Config) -> Result<Self> {
-        let next_id = sql
-            .get_meta::<Uuid>("next_id")?
-            .unwrap_or(Uuid::min_value());
+        let next_id = sql.get_meta::<Uuid>("next_id")?.unwrap_or(UUID_FIRST);
         let root = sql.get_meta::<Ref>("root")?.unwrap_or(Ref::null());
 
         sql.begin()?;
@@ -127,10 +137,40 @@ where
         HeapBuilder::new().from_file(file)
     }
 
-    pub fn allocate(&mut self) -> Ref {
-        let r = Ref::new(self.next_id);
+    pub fn allocate(&mut self, initial_data: T) -> Result<Ref> {
+        let r = Ref::new(self.next_id, self.next_id);
+        self.handle_overflow()?;
+        let oldval = self.cache.push(
+            r.block_id,
+            Block::new_dirty(r.sub_id, initial_data, self.cache_age),
+        );
+        self.dirty_changes += 1;
         self.next_id += 1;
-        r
+        assert!(oldval.is_none());
+        Ok(r)
+    }
+
+    pub fn allocate_local(&mut self, other: Ref, initial_data: T) -> Result<Ref> {
+        if other.is_null() {
+            return self.allocate(initial_data);
+        }
+
+        self.load_block(other)?;
+        // NOTE: does not modify the block's ordering
+        match self.cache.get_mut_unchecked(other.block_id()) {
+            None => self.allocate(initial_data),
+            Some(block) if block.data.len() >= self.config.maximum_block_size => {
+                self.allocate(initial_data)
+            }
+            Some(block) => {
+                let r = Ref::new(other.block_id, self.next_id);
+                block.data.push((r.sub_id, initial_data));
+                self.next_id += 1;
+                self.dirty_changes += 1;
+                block.state = BlockState::Dirty;
+                Ok(r)
+            }
+        }
     }
 
     pub fn root(&self) -> Ref {
@@ -152,30 +192,32 @@ where
     }
 
     pub fn set(&mut self, r: Ref, data: T) -> Result<()> {
-        assert!(!r.is_null());
-        self.handle_overflow()?;
-        let oldval = self.cache.push(r, Data::new_dirty(data, self.cache_age));
-        match oldval {
-            None
-            | Some(Data {
-                state: DataState::Clean,
-                ..
-            }) => {
-                self.dirty_changes += 1;
+        match self.deref_mut(r)? {
+            None => Err(HeapError::RefNotExists(r)),
+            Some(place) => {
+                *place = data;
+                Ok(())
             }
-            _ => (),
         }
-        Ok(())
     }
 
     pub fn remove_entry(&mut self, r: Ref) -> Result<()> {
-        self.load(r)?;
-        // NOTE: not ordered by state
-        self.cache.modify_unchecked(&r, |data| {
-            data.state = DataState::Remove;
-            self.dirty_changes += 1;
-        });
-        Ok(())
+        self.load_block(r)?;
+        // NOTE: does not modify the block's ordering
+        match self.cache.get_mut_unchecked(r.block_id()) {
+            None => Err(HeapError::RefNotExists(r)),
+            Some(block) => {
+                let len_before = block.data.len();
+                block.data.retain(|(sub, _)| *sub != r.sub_id);
+                if block.data.len() == len_before {
+                    return Err(HeapError::RefNotExists(r));
+                }
+                assert_eq!(block.data.len(), len_before - 1);
+                block.state = BlockState::Dirty;
+                self.dirty_changes += 1;
+                Ok(())
+            }
+        }
     }
 
     pub fn has_value(&mut self, r: Ref) -> Result<bool> {
@@ -183,36 +225,45 @@ where
     }
 
     pub fn deref(&mut self, r: Ref) -> Result<Option<&T>> {
-        self.load(r)?;
-        self.cache.modify(&r, |data| data.access_count += 1);
-        Ok(self
-            .cache
-            .get(&r)
-            .filter(|data| data.state != DataState::Remove)
-            .map(|data| &data.data))
+        self.load_block(r)?;
+        self.cache
+            .modify(r.block_id(), |data| data.access_count += 1);
+        Ok(self.cache.get(r.block_id()).and_then(|block| {
+            block
+                .data
+                .binary_search_by_key(r.sub_id(), |(sub_id, _)| *sub_id)
+                .ok()
+                .map(|i| &block.data[i].1)
+        }))
     }
 
     pub fn deref_mut(&mut self, r: Ref) -> Result<Option<&mut T>> {
-        self.load(r)?;
-        self.cache.modify(&r, |data| {
-            data.state = DataState::Dirty;
+        self.load_block(r)?;
+        self.cache.modify(r.block_id(), |data| {
+            data.state = BlockState::Dirty;
             data.access_count += 1;
             self.dirty_changes += 1;
         });
+        // NOTE: does not modify the block's ordering
         Ok(self
             .cache
-            .get_mut_unchecked(&r)
-            .filter(|data| data.state != DataState::Remove)
-            // NOTE: modifying data.data will not change the access_count, i.e., modify
-            // the ordering of data and destroy the heap.
-            .map(|data| &mut data.data))
+            .get_mut_unchecked(r.block_id())
+            .and_then(|block| {
+                block
+                    .data
+                    .binary_search_by_key(r.sub_id(), |(sub_id, _)| *sub_id)
+                    .ok()
+                    .map(|i| &mut block.data[i].1)
+            }))
     }
 
-    fn load(&mut self, r: Ref) -> Result<()> {
-        if !r.is_null() && !self.cache.contains_key(&r) {
-            if let Some(val) = self.sql.get_refs::<T>(r.id)? {
+    fn load_block(&mut self, r: Ref) -> Result<()> {
+        if !r.is_null() && !self.cache.contains_key(r.block_id()) {
+            if let Some(val) = self.sql.get_refs::<Vec<(Uuid, T)>>(r.block_id)? {
                 self.handle_overflow()?;
-                let oldval = self.cache.push(r, Data::new_clean(val, self.cache_age));
+                let oldval = self
+                    .cache
+                    .push(r.block_id, Block::new_clean(val, self.cache_age));
                 assert!(oldval.is_none());
             }
         }
@@ -223,14 +274,17 @@ where
         self.sql.put_meta("next_id", self.next_id)?;
         self.sql.put_meta("root", self.root)?;
 
-        for (r, data) in self.cache.iter() {
-            match data.state {
-                DataState::Clean => (),
-                DataState::Dirty => {
-                    self.sql.put_refs(r.id, &data.data)?;
+        for (&id, block) in self.cache.iter() {
+            match block.state {
+                BlockState::Clean => {
+                    assert!(!block.data.is_empty());
                 }
-                DataState::Remove => {
-                    self.sql.remove_refs(r.id)?;
+                BlockState::Dirty => {
+                    if block.data.is_empty() {
+                        self.sql.remove_refs(id)?;
+                    } else {
+                        self.sql.put_refs(id, &block.data)?;
+                    }
                 }
             }
         }
@@ -238,11 +292,9 @@ where
         self.sql.commit()?;
         self.sql.begin()?;
 
-        self.cache.retain(|data| {
-            if data.state == DataState::Dirty {
-                data.state = DataState::Clean;
-            }
-            data.state != DataState::Remove
+        self.cache.retain(|block| {
+            block.state = BlockState::Clean;
+            !block.data.is_empty()
         });
         self.dirty_changes = 0;
 
@@ -270,16 +322,19 @@ where
             // TODO: if the ref count overflows, then halve (or something) all
             // access_counts in the cache. But that will probably never happen since a
             // usize is pretty big.
-            let (r, min) = self.cache.pop().expect("the cache is not empty");
+            let (id, min) = self.cache.pop().expect("the cache is not empty");
             self.cache_age = min.access_count;
 
             match min.state {
-                DataState::Clean => (),
-                DataState::Remove => {
-                    self.sql.remove_refs(r.id)?;
+                BlockState::Clean => {
+                    assert!(!min.data.is_empty());
                 }
-                DataState::Dirty => {
-                    self.sql.put_refs(r.id, min.data)?;
+                BlockState::Dirty => {
+                    if min.data.is_empty() {
+                        self.sql.remove_refs(id)?;
+                    } else {
+                        self.sql.put_refs(id, min.data)?;
+                    }
                 }
             }
         }
@@ -288,12 +343,20 @@ where
 }
 
 impl Ref {
-    const fn new(id: Uuid) -> Self {
-        Self { id }
+    const fn new(block_id: Uuid, sub_id: Uuid) -> Self {
+        Self { block_id, sub_id }
+    }
+
+    fn block_id(&self) -> &Uuid {
+        &self.block_id
+    }
+
+    fn sub_id(&self) -> &Uuid {
+        &self.sub_id
     }
 
     pub const fn null() -> Self {
-        Self::new(Uuid::max_value())
+        Self::new(UUID_NULL, UUID_FIRST)
     }
 
     pub fn is_null(&self) -> bool {
@@ -301,36 +364,36 @@ impl Ref {
     }
 }
 
-impl<T> Data<T> {
-    fn new_dirty(data: T, access_count: usize) -> Self {
+impl<T> Block<T> {
+    fn new_dirty(sub_id: Uuid, init_data: T, access_count: usize) -> Self {
         Self {
-            data,
-            state: DataState::Dirty,
+            data: vec![(sub_id, init_data)],
+            state: BlockState::Dirty,
             access_count,
         }
     }
 
-    fn new_clean(data: T, access_count: usize) -> Self {
+    fn new_clean(data: Vec<(Uuid, T)>, access_count: usize) -> Self {
         Self {
             data,
-            state: DataState::Clean,
+            state: BlockState::Clean,
             access_count,
         }
     }
 }
 
-impl<T> PartialEq for Data<T> {
+impl<T> PartialEq for Block<T> {
     fn eq(&self, other: &Self) -> bool {
         self.access_count.eq(&other.access_count)
     }
 }
-impl<T> Eq for Data<T> {}
-impl<T> PartialOrd for Data<T> {
+impl<T> Eq for Block<T> {}
+impl<T> PartialOrd for Block<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.access_count.partial_cmp(&other.access_count)
     }
 }
-impl<T> Ord for Data<T> {
+impl<T> Ord for Block<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.access_count.cmp(&other.access_count)
     }
@@ -350,28 +413,27 @@ mod test {
             Ok(())
         }
 
-        fn state_of(&self, r: Ref) -> Option<DataState> {
-            self.cache.get(&r).map(|d| d.state)
+        fn state_of(&self, r: Ref) -> Option<BlockState> {
+            self.cache.get(r.block_id()).map(|d| d.state)
         }
     }
 
     #[test]
     fn test_insert() -> Result<()> {
         let mut db = Heap::<i32>::new_in_memory()?;
-        let r = db.allocate();
-        db.set(r, 5)?;
+        let r = db.allocate(5)?;
         assert_eq!(Some(&5), db.deref(r)?);
-        assert_eq!(Some(DataState::Dirty), db.state_of(r));
+        assert_eq!(Some(BlockState::Dirty), db.state_of(r));
 
         db.reset()?;
         assert_eq!(None, db.state_of(r));
         assert_eq!(Some(&5), db.deref(r)?);
-        assert_eq!(Some(DataState::Clean), db.state_of(r));
+        assert_eq!(Some(BlockState::Clean), db.state_of(r));
 
         assert_eq!(Some(&mut 5), db.deref_mut(r)?);
-        assert_eq!(Some(DataState::Dirty), db.state_of(r));
+        assert_eq!(Some(BlockState::Dirty), db.state_of(r));
 
-        assert_eq!(Uuid::min_value() + 1, db.next_id);
+        assert_eq!(UUID_FIRST + 1, db.next_id);
         Ok(())
     }
 

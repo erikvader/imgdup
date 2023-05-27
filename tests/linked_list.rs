@@ -14,13 +14,20 @@ struct Node {
 }
 
 impl Node {
-    fn new(data: i32, next: Ref) -> Self {
-        Self { data, next }
+    fn new(data: i32) -> Self {
+        Self {
+            data,
+            next: Ref::null(),
+        }
     }
 }
 
 impl List {
-    fn new(head: Ref) -> Self {
+    fn new() -> Self {
+        Self { head: Ref::null() }
+    }
+
+    fn from_existing(head: Ref) -> Self {
         Self { head }
     }
 
@@ -29,13 +36,21 @@ impl List {
     }
 
     fn add(&mut self, db: &mut Heap<Node>, data: i32) -> heap::Result<()> {
+        if self.head.is_null() {
+            self.head = db.allocate(Node::new(data))?;
+            return Ok(());
+        }
+
         let mut next = self.head;
         while let Some(node) = db.deref(next)? {
+            if node.next.is_null() {
+                break;
+            }
             next = node.next;
         }
 
-        let node_next = db.allocate();
-        db.set(next, Node::new(data, node_next))?;
+        let new_node = db.allocate_local(next, Node::new(data))?;
+        db.deref_mut(next)?.expect("does exist").next = new_node;
         Ok(())
     }
 
@@ -74,9 +89,7 @@ fn test_write_to_file() -> Result<()> {
     let tmp_path = tmp_path();
 
     let mut db = Heap::<Node>::new_from_file(&tmp_path)?;
-    let r1 = db.allocate();
-    let next = db.allocate();
-    db.set(r1, Node::new(5, next))?;
+    let r1 = db.allocate(Node::new(5))?;
     db.set_root(r1);
     db.close()?;
 
@@ -91,8 +104,8 @@ fn test_write_to_file() -> Result<()> {
 
 #[test]
 fn test_linked_list_add() -> Result<()> {
-    let mut db = Heap::<Node>::new_in_memory()?;
-    let mut list = List::new(db.allocate());
+    let mut db = HeapBuilder::new().with_maximum_block_size(1).in_memory()?;
+    let mut list = List::new();
 
     let mut reference = Vec::new();
     for i in 0..10 {
@@ -108,8 +121,8 @@ fn test_linked_list_add() -> Result<()> {
 
 #[test]
 fn test_linked_list_remove() -> Result<()> {
-    let mut db = Heap::<Node>::new_in_memory()?;
-    let mut list = List::new(db.allocate());
+    let mut db = HeapBuilder::new().with_maximum_block_size(1).in_memory()?;
+    let mut list = List::new();
 
     list.add(&mut db, 1)?;
     list.add(&mut db, 2)?;
@@ -128,9 +141,10 @@ fn test_linked_list_stress() -> Result<()> {
     let mut db: Heap<Node> = HeapBuilder::new()
         .with_cache_capacity(20)
         .with_dirtyness_limit(5)
+        .with_maximum_block_size(1)
         .from_file(&tmp_path)?;
 
-    let mut list = List::new(db.allocate());
+    let mut list = List::new();
     let mut reference = Vec::<i32>::new();
 
     for i in 0..1_000 {
@@ -159,7 +173,7 @@ fn test_linked_list_stress() -> Result<()> {
     db.set_root(list.head());
     db.close()?;
     let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
-    let list = List::new(db.root());
+    let list = List::from_existing(db.root());
     assert_eq!(reference.len(), db.count_refs()?);
     assert_eq!(reference, list.to_vec(&mut db)?);
 
@@ -171,9 +185,9 @@ fn test_linked_list_crash() -> Result<()> {
     let tmp_path = tmp_path();
     let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
 
-    let mut list = List::new(db.allocate());
-    db.set_root(list.head());
+    let mut list = List::new();
     list.add(&mut db, 1)?;
+    db.set_root(list.head());
     db.flush()?;
 
     list.add(&mut db, 2)?;
@@ -181,7 +195,7 @@ fn test_linked_list_crash() -> Result<()> {
     drop(db); // a panic or something caused it to drop before calling close
 
     let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
-    let list = List::new(db.root());
+    let list = List::from_existing(db.root());
     assert_eq!(vec![1], list.to_vec(&mut db)?);
 
     Ok(())
