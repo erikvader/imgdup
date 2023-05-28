@@ -201,7 +201,7 @@ where
         }
     }
 
-    pub fn remove_entry(&mut self, r: Ref) -> Result<()> {
+    pub fn remove(&mut self, r: Ref) -> Result<()> {
         self.load_block(r)?;
         // NOTE: does not modify the block's ordering
         match self.cache.get_mut_unchecked(r.block_id()) {
@@ -409,12 +409,21 @@ mod test {
     {
         pub fn reset(&mut self) -> Result<()> {
             self.flush()?;
+            assert!(self
+                .cache
+                .iter()
+                .all(|(_, block)| block.state == BlockState::Clean
+                    && !block.data.is_empty()));
             self.cache.clear();
             Ok(())
         }
 
         fn state_of(&self, r: Ref) -> Option<BlockState> {
             self.cache.get(r.block_id()).map(|d| d.state)
+        }
+
+        fn block_data_of(&self, r: Ref) -> Option<&[(Uuid, T)]> {
+            self.cache.get(r.block_id()).map(|d| d.data.as_slice())
         }
     }
 
@@ -438,9 +447,73 @@ mod test {
     }
 
     #[test]
+    fn test_insert_blocks() -> Result<()> {
+        let mut db = HeapBuilder::new()
+            .with_maximum_block_size(2)
+            .in_memory::<i32>()?;
+
+        let first = db.allocate(1)?;
+        let second = db.allocate(2)?;
+        assert_eq!(2, db.cache.len());
+        assert_ne!(first.block_id, second.block_id);
+
+        let third = db.allocate_local(first, 3)?;
+        assert_eq!(2, db.cache.len());
+        assert_eq!(first.block_id, third.block_id);
+        let block = db.block_data_of(first).unwrap();
+        assert!(block[0].0 < block[1].0);
+
+        let fourth = db.allocate_local(first, 4)?;
+        assert_eq!(3, db.cache.len());
+        assert_ne!(first.block_id, fourth.block_id);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_remove() -> Result<()> {
-        let mut db = Heap::<i32>::new_in_memory()?;
-        // TODO: testa att det inte går att hämta saker som är borttagna bland annat
+        let mut db = HeapBuilder::new()
+            .with_maximum_block_size(2)
+            .in_memory::<i32>()?;
+
+        let r1 = db.allocate(3)?;
+        assert_eq!(Some(&3), db.deref(r1)?);
+
+        db.remove(r1)?;
+        assert_eq!(Some(BlockState::Dirty), db.state_of(r1));
+        assert_eq!(Some(&[] as &[(_, _)]), db.block_data_of(r1));
+        assert_eq!(None, db.deref(r1)?);
+
+        let r2 = db.allocate(6)?;
+        assert_eq!(Some(BlockState::Dirty), db.state_of(r1));
+        assert_eq!(Some(&[] as &[(_, _)]), db.block_data_of(r1));
+        assert_eq!(Some(BlockState::Dirty), db.state_of(r2));
+        assert_eq!(1, db.block_data_of(r2).unwrap().len());
+
+        db.reset()?;
+        assert_eq!(None, db.state_of(r1));
+        assert_eq!(None, db.state_of(r2));
+
+        assert_eq!(Some(&6), db.deref(r2)?);
+        assert_eq!(None, db.deref(r1)?);
+
+        assert_eq!(None, db.state_of(r1));
+        assert_eq!(Some(BlockState::Clean), db.state_of(r2));
+        assert_eq!(1, db.count_refs()?);
+
+        db.reset()?;
+        db.remove(r2)?;
+        assert!(matches!(db.remove(r2), Err(HeapError::RefNotExists(_))));
+
+        assert_eq!(Some(BlockState::Dirty), db.state_of(r2));
+        assert_eq!(None, db.deref(r2)?);
+
+        db.reset()?;
+        assert_eq!(None, db.deref(r2)?);
+        assert_eq!(None, db.state_of(r2));
+
+        assert_eq!(0, db.count_refs()?);
+
         Ok(())
     }
 }

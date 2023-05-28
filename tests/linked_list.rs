@@ -64,7 +64,7 @@ impl List {
                 } else {
                     db.deref_mut(prev)?.expect("does exist").next = node.next;
                 }
-                db.remove_entry(next)?;
+                db.remove(next)?;
                 break;
             }
             prev = next;
@@ -135,37 +135,15 @@ fn test_linked_list_remove() -> Result<()> {
 }
 
 #[test]
-fn test_linked_list_stress() -> Result<()> {
+fn test_linked_list_stress_no_blocks() -> Result<()> {
     let tmp_path = tmp_path();
-    let mut rng = <rand::rngs::SmallRng as rand::SeedableRng>::seed_from_u64(3);
     let mut db: Heap<Node> = HeapBuilder::new()
         .with_cache_capacity(20)
         .with_dirtyness_limit(5)
         .with_maximum_block_size(1)
         .from_file(&tmp_path)?;
 
-    let mut list = List::new();
-    let mut reference = Vec::<i32>::new();
-
-    for i in 0..1_000 {
-        if rng.gen_ratio(1, 3) {
-            if !reference.is_empty() {
-                let i = rng.gen_range(0..reference.len());
-                let v = reference[i];
-
-                remove_first(&mut reference, v);
-                list.remove(&mut db, v)?;
-            }
-        } else {
-            let to_add: i32 = rng.gen();
-            reference.push(to_add);
-            list.add(&mut db, to_add)?;
-        }
-
-        if i % 10 == 0 {
-            db.checkpoint()?;
-        }
-    }
+    let (list, reference) = list_stress(&mut db)?;
 
     assert_eq!(reference.len(), db.count_refs()?);
     assert_eq!(reference, list.to_vec(&mut db)?);
@@ -178,6 +156,59 @@ fn test_linked_list_stress() -> Result<()> {
     assert_eq!(reference, list.to_vec(&mut db)?);
 
     Ok(())
+}
+
+#[test]
+fn test_linked_list_stress() -> Result<()> {
+    let tmp_path = tmp_path();
+    let mut db: Heap<Node> = HeapBuilder::new()
+        .with_cache_capacity(20)
+        .with_dirtyness_limit(5)
+        .with_maximum_block_size(10)
+        .from_file(&tmp_path)?;
+
+    let (list, reference) = list_stress(&mut db)?;
+
+    let refs_before = db.count_refs()?;
+    assert_eq!(reference, list.to_vec(&mut db)?);
+
+    db.set_root(list.head());
+    db.close()?;
+    let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
+    let list = List::from_existing(db.root());
+    assert_eq!(refs_before, db.count_refs()?);
+    assert_eq!(reference, list.to_vec(&mut db)?);
+
+    Ok(())
+}
+
+fn list_stress(db: &mut Heap<Node>) -> Result<(List, Vec<i32>)> {
+    let mut rng = <rand::rngs::SmallRng as rand::SeedableRng>::seed_from_u64(3);
+
+    let mut list = List::new();
+    let mut reference = Vec::<i32>::new();
+
+    for i in 0..1_000 {
+        if rng.gen_ratio(1, 3) {
+            if !reference.is_empty() {
+                let i = rng.gen_range(0..reference.len());
+                let v = reference[i];
+
+                remove_first(&mut reference, v);
+                list.remove(db, v)?;
+            }
+        } else {
+            let to_add: i32 = rng.gen();
+            reference.push(to_add);
+            list.add(db, to_add)?;
+        }
+
+        if i % 10 == 0 {
+            db.checkpoint()?;
+        }
+    }
+
+    Ok((list, reference))
 }
 
 #[test]
