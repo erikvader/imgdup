@@ -183,7 +183,7 @@ impl BKNode {
 
 #[cfg(test)]
 mod test {
-    use rand::{rngs::SmallRng, Rng, SeedableRng};
+    use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
     use super::*;
 
@@ -262,38 +262,52 @@ mod test {
         println!("Using seed: {}", seed);
         let mut rng = SmallRng::seed_from_u64(seed);
 
+        let within = 5;
+        let num_within = 100;
+        let num_dups = 30;
+        let total = 1_000;
+
+        let search_hash: Hamming = rng.gen();
+        let indices_within: HashSet<usize> =
+            rand::seq::index::sample(&mut rng, total, num_within)
+                .into_iter()
+                .collect();
+
         let mut tree = BKTree::in_memory()?;
-
-        let within = 32;
-        let search_hash = Hamming(rng.gen());
-        let mut the_answer = Vec::new();
-
-        for i in 0..1_000 {
-            let hash = Hamming(rng.gen());
-            tree.add(hash, value(i.to_string()))?;
-
-            let count = if rng.gen_ratio(1, 3) {
-                tree.add(hash, value(format!("dup_{}", i)))?;
-                2
+        let mut key = Vec::new();
+        for i in 0..total {
+            let hash = if indices_within.contains(&i) {
+                search_hash.random_within(&mut rng, within)
             } else {
-                1
+                search_hash.random_outside(&mut rng, within)
             };
 
+            tree.add(hash, value(i.to_string()))?;
+
             if search_hash.distance_to(hash) <= within {
-                for _ in 0..count {
-                    the_answer.push(hash);
-                }
+                key.push(hash);
             }
         }
+
+        {
+            let mut dups = Vec::with_capacity(num_dups);
+            for hash in key.choose_multiple(&mut rng, num_dups) {
+                tree.add(*hash, value("dup"))?;
+                dups.push(*hash);
+            }
+            key.extend(dups);
+        }
+
+        assert_eq!(num_dups + num_within, key.len());
 
         let mut closest = Vec::new();
         tree.find_within(search_hash, within, |hash, _| closest.push(hash))?;
 
-        assert_eq!(the_answer.len(), closest.len());
+        assert_eq!(key.len(), closest.len());
 
         closest.sort();
-        the_answer.sort();
-        assert_eq!(the_answer, closest);
+        key.sort();
+        assert_eq!(key, closest);
 
         Ok(())
     }
