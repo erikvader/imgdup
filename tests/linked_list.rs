@@ -1,5 +1,5 @@
 use imgdup::heap::{self, Heap, HeapBuilder, Ref, Result};
-use rand::Rng;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tempfile::{NamedTempFile, TempPath};
 
@@ -183,7 +183,9 @@ fn test_linked_list_stress() -> Result<()> {
 }
 
 fn list_stress(db: &mut Heap<Node>) -> Result<(List, Vec<i32>)> {
-    let mut rng = <rand::rngs::SmallRng as rand::SeedableRng>::seed_from_u64(3);
+    let seed: u64 = rand::random();
+    println!("Using seed: {}", seed);
+    let mut rng = SmallRng::seed_from_u64(seed);
 
     let mut list = List::new();
     let mut reference = Vec::<i32>::new();

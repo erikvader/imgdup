@@ -1,5 +1,7 @@
 use std::{
+    cmp,
     collections::{HashMap, HashSet},
+    hash::Hash,
     path::{Path, PathBuf},
 };
 
@@ -76,16 +78,37 @@ impl BKTree {
         Ok(())
     }
 
-    pub fn search<F>(
+    pub fn find_within<F>(
         &mut self,
         hash: Hamming,
-        max_dist: Distance,
+        within: Distance,
         mut visit: F,
     ) -> heap::Result<()>
     where
         F: FnMut(Hamming, &BKValue),
     {
-        todo!()
+        if self.db.root().is_null() {
+            return Ok(());
+        }
+
+        let mut stack = vec![self.db.root()];
+        while let Some(cur_ref) = stack.pop() {
+            let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
+            let dist = cur_node.hash.distance_to(hash);
+            if dist <= within {
+                if let Some(value) = &cur_node.value {
+                    visit(cur_node.hash, value);
+                }
+            }
+
+            for i in dist.saturating_sub(within)..=dist.saturating_add(within) {
+                if let Some(child_ref) = cur_node.children.get(&i) {
+                    stack.push(*child_ref);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn remove_any_of<P>(&mut self, these: &HashSet<P>) -> heap::Result<()>
@@ -96,10 +119,12 @@ impl BKTree {
             |node| {
                 node.value
                     .as_ref()
-                    .map_or(false, |value| these.contains(&value.source))
+                    .is_some_and(|value| these.contains(&value.source))
             },
             |node| node.value = None,
-        )
+        )?;
+        self.db.checkpoint()?;
+        Ok(())
     }
 
     pub fn for_each<F>(&mut self, mut visit: F) -> heap::Result<()>
@@ -158,9 +183,11 @@ impl BKNode {
 
 #[cfg(test)]
 mod test {
+    use rand::{rngs::SmallRng, Rng, SeedableRng};
+
     use super::*;
 
-    fn value(path: &str) -> BKValue {
+    fn value(path: impl Into<PathBuf>) -> BKValue {
         BKValue {
             timestamp: 0,
             source: path.into(),
@@ -197,6 +224,12 @@ mod test {
             all
         );
 
+        let mut closest = Vec::new();
+        tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.source.clone()))?;
+        closest.sort();
+        let answer: Vec<PathBuf> = vec!["5_1".into(), "5_2".into()];
+        assert_eq!(answer, closest);
+
         Ok(())
     }
 
@@ -219,6 +252,48 @@ mod test {
             ],
             all
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn find_within_large() -> heap::Result<()> {
+        let seed: u64 = rand::random();
+        println!("Using seed: {}", seed);
+        let mut rng = SmallRng::seed_from_u64(seed);
+
+        let mut tree = BKTree::in_memory()?;
+
+        let within = 32;
+        let search_hash = Hamming(rng.gen());
+        let mut the_answer = Vec::new();
+
+        for i in 0..1_000 {
+            let hash = Hamming(rng.gen());
+            tree.add(hash, value(i.to_string()))?;
+
+            let count = if rng.gen_ratio(1, 3) {
+                tree.add(hash, value(format!("dup_{}", i)))?;
+                2
+            } else {
+                1
+            };
+
+            if search_hash.distance_to(hash) <= within {
+                for _ in 0..count {
+                    the_answer.push(hash);
+                }
+            }
+        }
+
+        let mut closest = Vec::new();
+        tree.find_within(search_hash, within, |hash, _| closest.push(hash))?;
+
+        assert_eq!(the_answer.len(), closest.len());
+
+        closest.sort();
+        the_answer.sort();
+        assert_eq!(the_answer, closest);
 
         Ok(())
     }
