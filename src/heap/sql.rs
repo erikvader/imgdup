@@ -1,7 +1,6 @@
-use std::{io::Write, path::Path};
+use std::{io::Write, path::Path, sync::OnceLock};
 
 use super::Result;
-use once_cell::sync::Lazy;
 use rusqlite::{blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql};
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -136,47 +135,69 @@ impl Sql {
     where
         V: Serialize,
     {
-        static PUT_QUERY: Lazy<String> = Lazy::new(|| put_query(Table::Meta));
-        self.put_kv(&PUT_QUERY, Table::Meta, key, value)
+        static PUT_QUERY: OnceLock<String> = OnceLock::new();
+        self.put_kv(
+            PUT_QUERY.get_or_init(|| put_query(Table::Meta)),
+            Table::Meta,
+            key,
+            value,
+        )
     }
 
     pub(super) fn get_meta<V>(&self, key: &str) -> Result<Option<V>>
     where
         V: DeserializeOwned,
     {
-        static GET_QUERY: Lazy<String> = Lazy::new(|| get_query(Table::Meta));
-        self.get_kv(&GET_QUERY, Table::Meta, key)
+        static GET_QUERY: OnceLock<String> = OnceLock::new();
+        self.get_kv(
+            GET_QUERY.get_or_init(|| get_query(Table::Meta)),
+            Table::Meta,
+            key,
+        )
     }
 
     pub(super) fn remove_meta(&self, key: &str) -> Result<bool> {
-        static REMOVE_QUERY: Lazy<String> = Lazy::new(|| remove_query(Table::Meta));
-        self.remove_kv(&REMOVE_QUERY, key)
+        static REMOVE_QUERY: OnceLock<String> = OnceLock::new();
+        self.remove_kv(REMOVE_QUERY.get_or_init(|| remove_query(Table::Meta)), key)
     }
 
     pub(super) fn put_refs<V>(&self, key: i64, value: V) -> Result<()>
     where
         V: Serialize,
     {
-        static PUT_QUERY: Lazy<String> = Lazy::new(|| put_query(Table::Refs));
-        self.put_kv(&PUT_QUERY, Table::Refs, key, value)
+        static PUT_QUERY: OnceLock<String> = OnceLock::new();
+        self.put_kv(
+            PUT_QUERY.get_or_init(|| put_query(Table::Refs)),
+            Table::Refs,
+            key,
+            value,
+        )
     }
 
     pub(super) fn get_refs<V>(&self, key: i64) -> Result<Option<V>>
     where
         V: DeserializeOwned,
     {
-        static GET_QUERY: Lazy<String> = Lazy::new(|| get_query(Table::Refs));
-        self.get_kv(&GET_QUERY, Table::Refs, key)
+        static GET_QUERY: OnceLock<String> = OnceLock::new();
+        self.get_kv(
+            GET_QUERY.get_or_init(|| get_query(Table::Refs)),
+            Table::Refs,
+            key,
+        )
     }
 
     pub(super) fn remove_refs(&self, key: i64) -> Result<bool> {
-        static REMOVE_QUERY: Lazy<String> = Lazy::new(|| remove_query(Table::Refs));
-        self.remove_kv(&REMOVE_QUERY, key)
+        static REMOVE_QUERY: OnceLock<String> = OnceLock::new();
+        self.remove_kv(REMOVE_QUERY.get_or_init(|| remove_query(Table::Refs)), key)
     }
 
     pub(super) fn count_refs(&self) -> Result<usize> {
-        static COUNT_QUERY: Lazy<String> = Lazy::new(|| count_query(Table::Refs));
-        let count = self.db.query_row(&COUNT_QUERY, (), |row| row.get(0))?;
+        static COUNT_QUERY: OnceLock<String> = OnceLock::new();
+        let count = self.db.query_row(
+            COUNT_QUERY.get_or_init(|| count_query(Table::Refs)),
+            (),
+            |row| row.get(0),
+        )?;
         Ok(count)
     }
 
@@ -206,7 +227,7 @@ mod test {
 
     #[test]
     fn test_meta() -> Result<()> {
-        let mut sql = Sql::new_in_memory()?;
+        let sql = Sql::new_in_memory()?;
         sql.put_meta("asd", 42)?;
         assert_eq!(42, sql.get_meta("asd")?.unwrap());
 
@@ -224,7 +245,7 @@ mod test {
 
     #[test]
     fn test_refs() -> Result<()> {
-        let mut sql = Sql::new_in_memory()?;
+        let sql = Sql::new_in_memory()?;
         sql.put_refs(1, "omg")?;
         assert_eq!("omg", sql.get_refs::<String>(1)?.unwrap());
 
@@ -246,7 +267,7 @@ mod test {
 
     #[test]
     fn test_absent() -> Result<()> {
-        let mut sql = Sql::new_in_memory()?;
+        let sql = Sql::new_in_memory()?;
         assert!(sql.get_meta::<()>("asd")?.is_none());
         Ok(())
     }

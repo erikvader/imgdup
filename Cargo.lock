@@ -135,7 +135,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "indexmap",
- "once_cell",
  "rand",
  "rusqlite",
  "serde",
