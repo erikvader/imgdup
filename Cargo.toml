@@ -4,11 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rusqlite = {version = "0.29", features = ["blob"]}
 thiserror = "1"
+
+# For the heap on the file system
+rusqlite = {version = "0.29", features = ["blob"]}
 serde = {version = "1", features = ["derive"]}
 bincode = "1"
 indexmap = "1"
+
+# For video and image processing
+ffmpeg-next = "=6.0" # NOTE: does not follow semver
+image = "0.24"
+#imageproc = "0.23"
+image_hasher = "1"
 
 [dev-dependencies]
 tempfile = "3"
