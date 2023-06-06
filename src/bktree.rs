@@ -1,7 +1,5 @@
 use std::{
-    cmp,
     collections::{HashMap, HashSet},
-    hash::Hash,
     path::{Path, PathBuf},
 };
 
@@ -14,15 +12,15 @@ mod hamming;
 type Timestamp = u64;
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct BKValue {
-    timestamp: Timestamp,
-    source: PathBuf,
+pub enum Source {
+    Video { frame_pos: Timestamp, path: PathBuf },
+    Picture { path: PathBuf },
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct BKNode {
     hash: Hamming,
-    value: Option<BKValue>,
+    value: Option<Source>,
     children: HashMap<Distance, Ref>,
 }
 
@@ -48,7 +46,7 @@ impl BKTree {
         self.db.close()
     }
 
-    pub fn add(&mut self, hash: Hamming, value: BKValue) -> heap::Result<()> {
+    pub fn add(&mut self, hash: Hamming, value: Source) -> heap::Result<()> {
         if self.db.root().is_null() {
             let root = self.db.allocate(BKNode::new(hash, value))?;
             self.db.set_root(root);
@@ -85,7 +83,7 @@ impl BKTree {
         mut visit: F,
     ) -> heap::Result<()>
     where
-        F: FnMut(Hamming, &BKValue),
+        F: FnMut(Hamming, &Source),
     {
         if self.db.root().is_null() {
             return Ok(());
@@ -119,7 +117,7 @@ impl BKTree {
             |node| {
                 node.value
                     .as_ref()
-                    .is_some_and(|value| these.contains(&value.source))
+                    .is_some_and(|value| these.contains(value.path()))
             },
             |node| node.value = None,
         )?;
@@ -129,7 +127,7 @@ impl BKTree {
 
     pub fn for_each<F>(&mut self, mut visit: F) -> heap::Result<()>
     where
-        F: FnMut(Hamming, &BKValue),
+        F: FnMut(Hamming, &Source),
     {
         self.for_each_internal(
             |node| {
@@ -172,11 +170,20 @@ impl BKTree {
 }
 
 impl BKNode {
-    fn new(hash: Hamming, value: BKValue) -> Self {
+    fn new(hash: Hamming, value: Source) -> Self {
         Self {
             hash,
             value: Some(value),
             children: HashMap::new(),
+        }
+    }
+}
+
+impl Source {
+    pub fn path(&self) -> &Path {
+        match self {
+            Source::Video { path, .. } => &path,
+            Source::Picture { path } => &path,
         }
     }
 }
@@ -187,10 +194,10 @@ mod test {
 
     use super::*;
 
-    fn value(path: impl Into<PathBuf>) -> BKValue {
-        BKValue {
-            timestamp: 0,
-            source: path.into(),
+    fn value(path: impl Into<PathBuf>) -> Source {
+        Source::Video {
+            frame_pos: 0,
+            path: path.into(),
         }
     }
 
@@ -199,7 +206,11 @@ mod test {
         tree.for_each(|ham, val| {
             all.push((
                 ham,
-                val.source.clone().into_os_string().into_string().unwrap(),
+                val.path()
+                    .to_path_buf()
+                    .into_os_string()
+                    .into_string()
+                    .unwrap(),
             ))
         })?;
         all.sort();
@@ -225,7 +236,9 @@ mod test {
         );
 
         let mut closest = Vec::new();
-        tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.source.clone()))?;
+        tree.find_within(Hamming(0b101), 0, |_, val| {
+            closest.push(val.path().to_path_buf())
+        })?;
         closest.sort();
         let answer: Vec<PathBuf> = vec!["5_1".into(), "5_2".into()];
         assert_eq!(answer, closest);
