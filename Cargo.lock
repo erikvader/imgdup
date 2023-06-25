@@ -434,9 +434,11 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "ffmpeg-next",
+ "ffmpeg-sys-next",
  "image",
  "image_hasher",
  "indexmap",
+ "libc",
  "rand",
  "rusqlite",
  "serde",
