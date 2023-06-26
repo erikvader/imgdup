@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 1..=10 {
         match extractor.next() {
             Ok(Some((ts, img))) => {
-                let frame_filename = format!("frames/frame_{}_{}.jpg", i, ts.as_millis());
+                let frame_filename = format!("frames/frame_{}_{}.jpg", i, ts.to_string());
                 println!("Writing {}", frame_filename);
                 img.save(frame_filename)?;
             }

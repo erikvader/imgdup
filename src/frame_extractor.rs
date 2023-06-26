@@ -1,5 +1,7 @@
 extern crate ffmpeg_next as ffmpeg;
 
+pub mod timestamp;
+
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -14,10 +16,14 @@ use ffmpeg::{format::input, media::Type};
 use ffmpeg::{Packet as CodecPacket, Rational, Rescale};
 use image::RgbImage;
 
+use self::timestamp::Timestamp;
+
 #[derive(thiserror::Error, Debug)]
 pub enum FrameExtractorError {
     #[error("ffmpeg: {0}")]
     Ffmpeg(#[from] ffmpeg::Error),
+    #[error("timestamp does not seem to originate from the same file")]
+    TimestampMismatch,
 }
 
 pub type Result<T> = std::result::Result<T, FrameExtractorError>;
@@ -31,9 +37,12 @@ pub enum FrameExtractor {
         decoder: DecoderVideo,
         video_stream_index: usize,
         converter: ScalingContext,
+
+        seek_target_timestamp: i64,
         cur_timestamp: i64,
+
         end_timestamp: i64,
-        target_timestamp: i64,
+        first_timestamp: i64,
         timebase: Rational,
     },
     Done,
@@ -53,7 +62,9 @@ impl FrameExtractor {
             .best(Type::Video)
             .ok_or(ffmpeg::Error::StreamNotFound)?;
         let video_stream_index = video.index();
-        let cur_timestamp = video.start_time(); // TODO: is this really correct?
+        let cur_timestamp = video.start_time();
+        let seek_target_timestamp = video.start_time();
+        let first_timestamp = video.start_time();
         let end_timestamp = video.duration();
         let timebase = video.time_base();
 
@@ -70,7 +81,8 @@ impl FrameExtractor {
             converter,
             cur_timestamp,
             end_timestamp,
-            target_timestamp: cur_timestamp,
+            seek_target_timestamp,
+            first_timestamp,
             timebase,
         })
     }
@@ -93,15 +105,16 @@ impl FrameExtractor {
         *self = Self::Done;
     }
 
-    pub fn next(&mut self) -> Result<Option<(Duration, RgbImage)>> {
+    pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
         while let Self::Active {
             ictx,
             decoder,
             video_stream_index,
             converter,
             cur_timestamp,
-            target_timestamp,
+            seek_target_timestamp,
             timebase,
+            first_timestamp,
             ..
         } = self
         {
@@ -142,7 +155,7 @@ impl FrameExtractor {
                     .timestamp()
                     .expect("this is always set by the decoder?");
 
-                if *cur_timestamp < *target_timestamp {
+                if *cur_timestamp < *seek_target_timestamp {
                     continue;
                 }
 
@@ -156,7 +169,7 @@ impl FrameExtractor {
                 )
                 .expect("the buffer is big enough!");
 
-                let dur = timestamp2duration(*cur_timestamp, *timebase);
+                let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
                 return Ok(Some((dur, img)));
             }
         }
@@ -167,18 +180,50 @@ impl FrameExtractor {
     pub fn seek_forward(&mut self, dur: Duration) -> Result<()> {
         match self {
             Self::Active {
-                ictx,
                 cur_timestamp,
-                video_stream_index,
                 timebase,
-                decoder,
-                target_timestamp,
                 ..
             } => {
                 let target = *cur_timestamp + duration2timestamp(dur, *timebase);
+                self.seek_internal(target)
+            }
+            Self::Done => panic!("can't seek when done"),
+        }
+    }
+
+    pub fn seek_to(&mut self, timestamp: Timestamp) -> Result<()> {
+        match self {
+            Self::Active {
+                timebase,
+                first_timestamp,
+                ..
+            } => {
+                if timestamp.first_timestamp != *first_timestamp
+                    || timestamp.timebase_numerator != timebase.numerator()
+                    || timestamp.timebase_denominator != timebase.denominator()
+                {
+                    return Err(FrameExtractorError::TimestampMismatch);
+                }
+                self.seek_internal(timestamp.timestamp)
+            }
+            Self::Done => panic!("can't seek when done"),
+        }
+    }
+
+    fn seek_internal(&mut self, target: i64) -> Result<()> {
+        match self {
+            Self::Active {
+                ictx,
+                video_stream_index,
+                decoder,
+                seek_target_timestamp,
+                ..
+            } => {
+                // TODO: don't seek or undo it if this jumps back, it will just decode the
+                // same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
                 seek(ictx, *video_stream_index, target, ..)?;
                 decoder.flush();
-                *target_timestamp = target;
+                *seek_target_timestamp = target;
                 Ok(())
             }
             Self::Done => panic!("can't seek when done"),
@@ -186,7 +231,6 @@ impl FrameExtractor {
     }
 }
 
-// TODO: Does this need to take start_time into account?
 fn duration2timestamp(dur: Duration, timebase: Rational) -> i64 {
     let step: i64 = dur
         .as_millis()
@@ -195,14 +239,6 @@ fn duration2timestamp(dur: Duration, timebase: Rational) -> i64 {
     let to_seconds = Rational::new(1, 1000);
     // NOTE: This is: step * to_seconds / timebase
     step.rescale(to_seconds, timebase)
-}
-
-// TODO: Does this need to take start_time into account?
-fn timestamp2duration(timestamp: i64, timebase: Rational) -> Duration {
-    let to_seconds = Rational::new(1, 1000);
-    // NOTE: timestamp * timebase / to_seconds
-    let millis = timestamp.rescale(timebase, to_seconds);
-    Duration::from_millis(millis.try_into().expect("probably not a problem"))
 }
 
 /// A copy of FormatContext::seek, except that this accepts a stream_index to seek on.
