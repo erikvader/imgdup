@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1"
+anyhow = "1"
 
 # For the heap on the file system
 rusqlite = {version = "0.29", features = ["blob"]}
