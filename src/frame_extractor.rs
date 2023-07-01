@@ -12,6 +12,7 @@ use ffmpeg::format::context::Input as FormatContext;
 use ffmpeg::format::Pixel;
 use ffmpeg::frame::Video as FrameVideo;
 use ffmpeg::software::scaling::context::Context as ScalingContext;
+use ffmpeg::util::log as ffmpeglog;
 use ffmpeg::{format::input, media::Type};
 use ffmpeg::{Packet as CodecPacket, Rational, Rescale};
 use image::RgbImage;
@@ -50,13 +51,23 @@ pub enum FrameExtractor {
 
 impl FrameExtractor {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| ffmpeg::init()) {
+        if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| {
+            ffmpeg::init()?;
+            // TODO: Save more logs from maybe level error or warning.
+            // https://www.ffmpeg.org/doxygen/trunk/group__lavu__log__constants.html#ga11e329935b59b83ca722b66674f37fd4
+            // Somehow set a callback with av_log_set_callback.
+            // https://github.com/zmwangx/rust-ffmpeg/pull/91
+            // Give back a list of error messages in the `next` function alongside the
+            // picture?
+            ffmpeglog::set_level(ffmpeglog::Level::Fatal);
+            Ok(())
+        }) {
             return Err(e.clone().into());
         }
 
         let ictx = input(&path)?;
         // TODO: somehow set the discard property on everything, except the video, to
-        // improve seeking
+        // improve seeking. There doesn't seem to be a way to do this in ffmpeg-next 6.0.0
         let video = ictx
             .streams()
             .best(Type::Video)
@@ -184,6 +195,9 @@ impl FrameExtractor {
                 timebase,
                 ..
             } => {
+                if dur.is_zero() {
+                    return Ok(());
+                }
                 let target = *cur_timestamp + duration2timestamp(dur, *timebase);
                 self.seek_internal(target)
             }

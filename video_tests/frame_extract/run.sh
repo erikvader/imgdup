@@ -1,4 +1,6 @@
-#!/bin/sh
+#!/bin/bash
+
+set -e
 
 # https://www.youtube.com/watch?v=pHvP71rwYAc
 VIDEONORMAL='10 Minute Timer (count-up stopwatch) [pHvP71rwYAc].webm'
@@ -11,7 +13,7 @@ mkdir frames_shifted
 mkdir frames_normal
 
 # 10 frames with the timer in the images counting up from 0
-cargo run --bin frame_extractor "$VIDEONORMAL" 1 frames_normal 10
+cargo run --bin frame_extractor -- --step 1s --outdir frames_normal --num 10 "$VIDEONORMAL"
 # 10 frames with the timer in the images counting up from 5, but the timestamp in the
 # filename starts at 0.
-cargo run --bin frame_extractor "$VIDEOSHIFTED" 1 frames_shifted 10
+cargo run --bin frame_extractor -- --step 1s --outdir frames_shifted --num 10 "$VIDEOSHIFTED"
