@@ -21,6 +21,8 @@ impl Timestamp {
     }
 
     pub fn to_string(&self) -> String {
+        // TODO: Why not use ffmpeg rescale and rational if not all decimals are going to
+        // be used?
         let mut total: f64 = (self.timestamp as f64 - self.first_timestamp as f64)
             * (self.timebase_numerator as f64 / self.timebase_denominator as f64);
 
