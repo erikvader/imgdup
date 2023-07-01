@@ -243,6 +243,18 @@ impl FrameExtractor {
             Self::Done => panic!("can't seek when done"),
         }
     }
+
+    pub fn length(&self) -> Duration {
+        match self {
+            Self::Active {
+                end_timestamp,
+                first_timestamp,
+                timebase,
+                ..
+            } => timestamp2duration(end_timestamp - first_timestamp, *timebase),
+            Self::Done => panic!("can't get length on done"),
+        }
+    }
 }
 
 fn duration2timestamp(dur: Duration, timebase: Rational) -> i64 {
@@ -253,6 +265,13 @@ fn duration2timestamp(dur: Duration, timebase: Rational) -> i64 {
     let to_seconds = Rational::new(1, 1000);
     // NOTE: This is: step * to_seconds / timebase
     step.rescale(to_seconds, timebase)
+}
+
+fn timestamp2duration(timestamp: i64, timebase: Rational) -> Duration {
+    let to_seconds = Rational::new(1, 1000);
+    // NOTE: timestamp * timebase / to_seconds
+    let millis = std::cmp::max(0, timestamp.rescale(timebase, to_seconds));
+    Duration::from_millis(millis.try_into().expect("probably not a problem"))
 }
 
 /// A copy of FormatContext::seek, except that this accepts a stream_index to seek on.
