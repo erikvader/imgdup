@@ -15,11 +15,12 @@ indexmap = "1"
 
 # For video and image processing
 ffmpeg-next = "=6.0" # NOTE: does not follow semver
-ffmpeg-sys-next = "6.0"
+ffmpeg-sys-next = "=6.0"
 libc = "0.2"
 image = "0.24"
 #imageproc = "0.23"
 image_hasher = "1"
+base64 = "0.21"
 clap = { version = "4.3", features = ["derive"] }
 humantime = "2.1"
 

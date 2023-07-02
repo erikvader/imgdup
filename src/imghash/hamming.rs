@@ -1,4 +1,5 @@
 pub type Distance = u32;
+pub type Container = u64;
 
 #[derive(
     Clone,
@@ -11,19 +12,41 @@ pub type Distance = u32;
     Ord,
     PartialOrd,
 )]
-pub struct Hamming(pub u64);
+pub struct Hamming(pub Container);
 
 impl Hamming {
-    pub const BITS: u32 = u64::BITS;
+    pub const BITS: u32 = Container::BITS;
+    pub const BYTES: usize = std::mem::size_of::<Container>();
     pub const MIN_DIST: Distance = 0;
     pub const MAX_DIST: Distance = Hamming::BITS;
+
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        assert_eq!(Hamming::BYTES, bytes.len());
+        let array: [u8; Hamming::BYTES] = bytes
+            .try_into()
+            .expect("the slice is of the incorrect length");
+        Self(Container::from_ne_bytes(array))
+    }
+
+    pub fn to_base64(self) -> String {
+        base64::Engine::encode(
+            &base64::prelude::BASE64_STANDARD_NO_PAD,
+            self.0.to_ne_bytes(),
+        )
+    }
 
     pub fn distance_to(self, other: Self) -> Distance {
         (self.0 ^ other.0).count_ones()
     }
 
-    pub fn distance(a: u64, b: u64) -> Distance {
+    pub fn distance(a: Container, b: Container) -> Distance {
         Hamming(a).distance_to(Hamming(b))
+    }
+}
+
+impl std::fmt::Display for Hamming {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_base64().fmt(f)
     }
 }
 
@@ -85,7 +108,14 @@ mod test {
     #[test]
     fn hamming_distances() {
         assert_eq!(0, Hamming(0).distance_to(Hamming(0)));
-        assert_eq!(0, Hamming(u64::MAX).distance_to(Hamming(u64::MAX)));
+        assert_eq!(
+            0,
+            Hamming(Container::MAX).distance_to(Hamming(Container::MAX))
+        );
         assert_eq!(3, Hamming(0b101).distance_to(Hamming(0b010)));
+        assert_eq!(
+            Hamming(0b101).distance_to(Hamming(0b010)),
+            Hamming(0b010).distance_to(Hamming(0b101))
+        );
     }
 }
