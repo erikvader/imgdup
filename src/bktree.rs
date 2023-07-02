@@ -3,13 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::heap::{self, Heap, HeapBuilder, Ref};
+use crate::{
+    heap::{self, Heap, HeapBuilder, Ref},
+    imghash::hamming::{Distance, Hamming},
+};
 
-use self::hamming::{Distance, Hamming};
-
-mod hamming;
-
-type Timestamp = u64;
+type Timestamp = u64; // TODO: replace
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Source {

@@ -1,5 +1,8 @@
 use std::{io::Write, path::Path, sync::OnceLock};
 
+// TODO: https://github.com/meilisearch/heed ??
+// TODO: https://github.com/seladb/pickledb-rs ??
+
 use super::Result;
 use rusqlite::{blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql};
 use serde::{de::DeserializeOwned, Serialize};

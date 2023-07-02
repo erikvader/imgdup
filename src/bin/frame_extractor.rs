@@ -36,19 +36,13 @@ fn main() -> anyhow::Result<()> {
     let mut extractor = FrameExtractor::new(cli.videofile)?;
     extractor.seek_forward(cli.offset.into())?;
     for i in 1..=cli.num {
-        match extractor.next() {
-            Ok(Some((ts, img))) => {
-                let frame_filename = format!(
-                    "{}/frame_{}_{}.jpg",
-                    cli.outdir.to_string_lossy(),
-                    i,
-                    ts.to_string()
-                );
-                println!("Writing {}", frame_filename);
-                img.save(frame_filename)?;
+        match extractor.next()? {
+            Some((ts, img)) => {
+                let frame_filename = format!("frame_{}_{}.jpg", i, ts.to_string());
+                println!("Writing {:?}", frame_filename);
+                img.save(cli.outdir.join(frame_filename))?;
             }
-            Ok(None) => break,
-            Err(e) => return Err(e.into()),
+            None => break,
         }
         extractor.seek_forward(cli.step.into())?;
     }
