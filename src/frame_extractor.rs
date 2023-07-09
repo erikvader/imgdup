@@ -34,25 +34,22 @@ pub type Result<T> = std::result::Result<T, FrameExtractorError>;
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
     OnceLock::new();
 
-pub enum FrameExtractor {
+pub struct FrameExtractor {
     // TODO: probably split into several structs
-    Active {
-        // ffmpeg contexts
-        ictx: FormatContext,
-        decoder: DecoderVideo,
-        converter: ScalingContext,
+    // ffmpeg contexts
+    ictx: FormatContext,
+    decoder: DecoderVideo,
+    converter: ScalingContext,
 
-        // internal timestamp bookkeeping
-        seek_target_timestamp: i64,
-        cur_timestamp: i64,
+    // internal timestamp bookkeeping
+    seek_target_timestamp: i64,
+    cur_timestamp: i64,
 
-        // constants/metadata
-        end_timestamp: i64,
-        first_timestamp: i64,
-        timebase: Rational,
-        video_stream_index: usize,
-    },
-    Done,
+    // constants/metadata
+    end_timestamp: i64,
+    first_timestamp: i64,
+    timebase: Rational,
+    video_stream_index: usize,
 }
 
 impl FrameExtractor {
@@ -97,7 +94,7 @@ impl FrameExtractor {
 
         let converter = Self::pixel_converter(&decoder)?;
 
-        Ok(Self::Active {
+        Ok(Self {
             ictx,
             decoder,
             video_stream_index,
@@ -124,12 +121,8 @@ impl FrameExtractor {
         .map_err(|e| e.into())
     }
 
-    fn set_done(&mut self) {
-        *self = Self::Done;
-    }
-
     pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
-        while let Self::Active {
+        let Self {
             ictx,
             decoder,
             video_stream_index,
@@ -139,16 +132,14 @@ impl FrameExtractor {
             timebase,
             first_timestamp,
             ..
-        } = self
-        {
+        } = self;
+
+        loop {
             // http://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#ga4fdb3084415a82e3810de6ee60e46a61
             let mut packet = CodecPacket::empty();
             match packet.read(ictx) {
                 Ok(()) => (),
-                Err(ffmpeg::Error::Eof) => {
-                    self.set_done(); // TODO: remove this whole done business
-                    break;
-                }
+                Err(ffmpeg::Error::Eof) => return Ok(None),
                 Err(e) => return Err(e.into()),
             }
 
@@ -167,10 +158,7 @@ impl FrameExtractor {
                     Err(ffmpeg::Error::Other {
                         errno: libc::EAGAIN,
                     }) => break,
-                    Err(ffmpeg::Error::Eof) => {
-                        self.set_done();
-                        break;
-                    }
+                    Err(ffmpeg::Error::Eof) => return Ok(None),
                     Err(e) => return Err(e.into()),
                 }
 
@@ -190,88 +178,75 @@ impl FrameExtractor {
                 return Ok(Some((dur, img)));
             }
         }
-
-        Ok(None)
     }
 
     pub fn seek_forward(&mut self, dur: Duration) -> Result<()> {
-        match self {
-            Self::Active {
-                cur_timestamp,
-                timebase,
-                ..
-            } => {
-                if dur.is_zero() {
-                    return Ok(());
-                }
-                let target = *cur_timestamp + duration2timestamp(dur, *timebase);
-                // TODO: don't seek, or undo it, if this jumps back, it will just decode
-                // the same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
-                self.seek_internal(target)
-            }
-            Self::Done => panic!("can't seek_forward when done"),
+        if dur.is_zero() {
+            return Ok(());
         }
+
+        let Self {
+            cur_timestamp,
+            timebase,
+            ..
+        } = self;
+
+        let target = *cur_timestamp + duration2timestamp(dur, *timebase);
+        // TODO: don't seek, or undo it, if this jumps back, it will just decode
+        // the same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
+        self.seek_internal(target)
     }
 
     pub fn seek_to(&mut self, timestamp: Timestamp) -> Result<()> {
-        match self {
-            Self::Active {
-                timebase,
-                first_timestamp,
-                ..
-            } => {
-                if timestamp.first_timestamp != *first_timestamp
-                    || timestamp.timebase_numerator != timebase.numerator()
-                    || timestamp.timebase_denominator != timebase.denominator()
-                {
-                    return Err(FrameExtractorError::TimestampMismatch);
-                }
-                self.seek_internal(timestamp.timestamp)
-            }
-            Self::Done => panic!("can't seek_to when done"),
+        let Self {
+            timebase,
+            first_timestamp,
+            ..
+        } = self;
+
+        if timestamp.first_timestamp != *first_timestamp
+            || timestamp.timebase_numerator != timebase.numerator()
+            || timestamp.timebase_denominator != timebase.denominator()
+        {
+            return Err(FrameExtractorError::TimestampMismatch);
         }
+
+        self.seek_internal(timestamp.timestamp)
     }
 
     pub fn seek_to_beginning(&mut self) -> Result<()> {
-        match self {
-            Self::Active {
-                first_timestamp, ..
-            } => {
-                let first_timestamp = *first_timestamp;
-                self.seek_internal(first_timestamp)
-            }
-            Self::Done => panic!("can't seek_to_beginning when done"),
-        }
+        let Self {
+            first_timestamp, ..
+        } = self;
+
+        let first_timestamp = *first_timestamp;
+        self.seek_internal(first_timestamp)
     }
 
     fn seek_internal(&mut self, target: i64) -> Result<()> {
-        match self {
-            Self::Active {
-                ictx,
-                video_stream_index,
-                decoder,
-                seek_target_timestamp,
-                ..
-            } => {
-                seek(ictx, *video_stream_index, target, ..)?;
-                decoder.flush();
-                *seek_target_timestamp = target;
-                Ok(())
-            }
-            Self::Done => panic!("can't seek_internal when done"),
-        }
+        let Self {
+            ictx,
+            video_stream_index,
+            decoder,
+            seek_target_timestamp,
+            ..
+        } = self;
+
+        seek(ictx, *video_stream_index, target, ..)?;
+        decoder.flush();
+        *seek_target_timestamp = target;
+        Ok(())
     }
 
     pub fn approx_length(&self) -> Duration {
-        match self {
-            Self::Active {
-                end_timestamp,
-                first_timestamp,
-                timebase,
-                ..
-            } => timestamp2duration(end_timestamp - first_timestamp, *timebase),
-            Self::Done => panic!("can't get length on done"),
-        }
+        let Self {
+            end_timestamp,
+            first_timestamp,
+            timebase,
+            ..
+        } = self;
+
+        timestamp2duration(end_timestamp - first_timestamp, *timebase)
     }
 }
 
@@ -350,26 +325,24 @@ fn seek<R: ffmpeg::util::range::Range<i64>>(
 
 impl fmt::Debug for FrameExtractor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Active {
-                first_timestamp,
-                end_timestamp,
-                timebase,
-                cur_timestamp,
-                seek_target_timestamp,
-                ..
-            } => f
-                .debug_struct("FrameExtractor::Active")
-                .field("first_ts", first_timestamp)
-                .field("last_ts", end_timestamp)
-                .field("cur_ts", cur_timestamp)
-                .field(
-                    "tb",
-                    &format_args!("{}/{}", timebase.numerator(), timebase.denominator()),
-                )
-                .field("seek_ts", seek_target_timestamp)
-                .finish(),
-            Self::Done => f.debug_struct("FrameExtractor::Done").finish(),
-        }
+        let Self {
+            first_timestamp,
+            end_timestamp,
+            timebase,
+            cur_timestamp,
+            seek_target_timestamp,
+            ..
+        } = self;
+
+        f.debug_struct("FrameExtractor::Active")
+            .field("first_ts", first_timestamp)
+            .field("last_ts", end_timestamp)
+            .field("cur_ts", cur_timestamp)
+            .field(
+                "tb",
+                &format_args!("{}/{}", timebase.numerator(), timebase.denominator()),
+            )
+            .field("seek_ts", seek_target_timestamp)
+            .finish()
     }
 }
