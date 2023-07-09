@@ -10,7 +10,7 @@ use imgdup::{
 
 #[derive(Parser)]
 #[command()]
-/// Hash frames frome a video with slight modifications to get a feel for hash performance
+/// Hash frames from a video with slight modifications to get a feel for hash performance
 struct Cli {
     /// Perform tests on different resolutions
     #[arg(long, value_delimiter = ',', value_name = "HEIGHTS", num_args = 1..)]
@@ -23,6 +23,10 @@ struct Cli {
     /// Perform tests on this many subsequent frames
     #[arg(long)]
     consecutive_test: Option<u32>,
+
+    /// How much to skip between consecutive frames
+    #[arg(long, requires = "consecutive_test")]
+    step: Option<humantime::Duration>,
 
     /// Perform a test on a flipped frame
     #[arg(long)]
@@ -63,6 +67,21 @@ fn main() -> anyhow::Result<()> {
         resolution_test(&frame, frame_hash, &heights, cli.outdir.as_ref())?;
     }
 
+    if let Some(heights) = cli.quality_test {
+        quality_test(&frame, frame_hash, &heights, cli.outdir.as_ref())?;
+    }
+
+    if let Some(times) = cli.consecutive_test {
+        consecutive_test(
+            &frame,
+            frame_hash,
+            times,
+            cli.step,
+            cli.outdir.as_ref(),
+            &mut extractor,
+        )?;
+    }
+
     Ok(())
 }
 
@@ -83,6 +102,42 @@ fn resolution_test(
         println!("The distance to height={h} is {dist} ({resized_hash})");
     }
 
+    Ok(())
+}
+
+fn quality_test(
+    frame: &RgbImage,
+    frame_hash: Hamming,
+    heights: &[u32],
+    outdir: Option<&PathBuf>,
+) -> anyhow::Result<()> {
+    for h in heights {
+        let resized = imgutils::worsen_quality(frame, *h);
+        let filename = format!("quality_{h}.jpg");
+        write_image(outdir, filename, &resized)?;
+
+        let resized_hash = imghash::hash(&resized);
+        let dist = frame_hash.distance_to(resized_hash);
+
+        println!("The distance to height={h} is {dist} ({resized_hash})");
+    }
+
+    Ok(())
+}
+
+fn consecutive_test(
+    _frame: &RgbImage,
+    _frame_hash: Hamming,
+    times: u32,
+    _step: Option<humantime::Duration>,
+    _outdir: Option<&PathBuf>,
+    _extractor: &mut FrameExtractor,
+) -> anyhow::Result<()> {
+    for _i in 1..=times {
+        todo!(
+            "what does this really say? It really depends on where in the video this is"
+        );
+    }
     Ok(())
 }
 

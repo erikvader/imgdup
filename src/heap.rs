@@ -308,6 +308,8 @@ where
         Ok(())
     }
 
+    /// Saving is not done on drop because the db should not accidentally be saved in an
+    /// invalid state from e.g. panics.
     pub fn close(mut self) -> Result<()> {
         self.flush()?;
         self.sql.close()?;
