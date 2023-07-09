@@ -2,25 +2,26 @@ extern crate ffmpeg_next as ffmpeg;
 
 pub mod timestamp;
 
-use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::{fmt, ptr};
 
 use ffmpeg::codec::Context as CodecContext;
 use ffmpeg::decoder::Video as DecoderVideo;
 use ffmpeg::format::context::Input as FormatContext;
-use ffmpeg::format::Pixel;
+use ffmpeg::format::{input_with_dictionary, Pixel};
 use ffmpeg::frame::Video as FrameVideo;
 use ffmpeg::software::scaling::context::Context as ScalingContext;
 use ffmpeg::util::log as ffmpeglog;
 use ffmpeg::{format::input, media::Type};
-use ffmpeg::{Packet as CodecPacket, Rational, Rescale};
+use ffmpeg::{Dictionary, Packet as CodecPacket, Rational, Rescale};
 use ffmpeg_sys_next::{AV_NOPTS_VALUE, AV_TIME_BASE_Q};
 use image::RgbImage;
 
 use self::timestamp::Timestamp;
 
+// TODO: use an error type that records stacktraces
 #[derive(thiserror::Error, Debug)]
 pub enum FrameExtractorError {
     #[error("ffmpeg: {0}")]
@@ -62,13 +63,19 @@ impl FrameExtractor {
             // https://github.com/zmwangx/rust-ffmpeg/pull/91
             // Give back a list of error messages in the `next` function alongside the
             // picture?
-            ffmpeglog::set_level(ffmpeglog::Level::Fatal);
+            ffmpeglog::set_level(ffmpeglog::Level::Fatal); // TODO:
             Ok(())
         }) {
             return Err(e.clone().into());
         }
 
-        let ictx = input(&path)?;
+        let options = {
+            let mut options = Dictionary::new();
+            options.set("analyzeduration", "10M");
+            options.set("probesize", "5M"); // this is the default
+            options
+        };
+        let ictx = input_with_dictionary(&path, options)?;
         // TODO: somehow set the discard property on everything, except the video, to
         // improve seeking. There doesn't seem to be a way to do this in ffmpeg-next 6.0.0
         let video = ictx
@@ -108,6 +115,7 @@ impl FrameExtractor {
     }
 
     fn pixel_converter(decoder: &DecoderVideo) -> Result<ScalingContext> {
+        assert_ne!(Pixel::None, decoder.format());
         ScalingContext::get(
             decoder.format(),
             decoder.width(),
@@ -135,20 +143,6 @@ impl FrameExtractor {
         } = self;
 
         loop {
-            // http://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#ga4fdb3084415a82e3810de6ee60e46a61
-            let mut packet = CodecPacket::empty();
-            match packet.read(ictx) {
-                Ok(()) => (),
-                Err(ffmpeg::Error::Eof) => return Ok(None),
-                Err(e) => return Err(e.into()),
-            }
-
-            if packet.stream() != *video_stream_index {
-                continue;
-            }
-
-            decoder.send_packet(&packet)?;
-
             loop {
                 let mut frame = FrameVideo::empty();
                 // avcodec_receive_frame
@@ -158,6 +152,8 @@ impl FrameExtractor {
                     Err(ffmpeg::Error::Other {
                         errno: libc::EAGAIN,
                     }) => break,
+                    // End of stream situations.
+                    // https://ffmpeg.org/doxygen/trunk/avcodec_8h_source.html
                     Err(ffmpeg::Error::Eof) => return Ok(None),
                     Err(e) => return Err(e.into()),
                 }
@@ -176,6 +172,25 @@ impl FrameExtractor {
 
                 let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
                 return Ok(Some((dur, img)));
+            }
+
+            loop {
+                // http://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#ga4fdb3084415a82e3810de6ee60e46a61
+                let mut packet = CodecPacket::empty();
+                match packet.read(ictx) {
+                    Ok(()) if packet.stream() == *video_stream_index => {
+                        match decoder.send_packet(&packet) {
+                            Ok(()) => break,
+                            Err(_) => continue, // TODO: report to user somehow
+                        }
+                    }
+                    Ok(()) => continue,
+                    Err(ffmpeg::Error::Eof) => {
+                        decoder.send_eof()?;
+                        break;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
             }
         }
     }
