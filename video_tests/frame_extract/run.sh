@@ -9,8 +9,6 @@ VIDEONORMAL='10 Minute Timer (count-up stopwatch) [pHvP71rwYAc].webm'
 VIDEOSHIFTED='10 Minute Timer (count-up stopwatch) [pHvP71rwYAc] shifted.webm'
 
 rm -rf frames_normal frames_shifted
-mkdir frames_shifted
-mkdir frames_normal
 
 # 10 frames with the timer in the images counting up from 0
 cargo run --bin frame_extractor -- --step 1s --outdir frames_normal --num 10 "$VIDEONORMAL"
