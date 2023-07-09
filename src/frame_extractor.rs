@@ -2,6 +2,7 @@ extern crate ffmpeg_next as ffmpeg;
 
 pub mod timestamp;
 
+use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -15,6 +16,7 @@ use ffmpeg::software::scaling::context::Context as ScalingContext;
 use ffmpeg::util::log as ffmpeglog;
 use ffmpeg::{format::input, media::Type};
 use ffmpeg::{Packet as CodecPacket, Rational, Rescale};
+use ffmpeg_sys_next::{AV_NOPTS_VALUE, AV_TIME_BASE_Q};
 use image::RgbImage;
 
 use self::timestamp::Timestamp;
@@ -33,18 +35,22 @@ static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
     OnceLock::new();
 
 pub enum FrameExtractor {
+    // TODO: probably split into several structs
     Active {
+        // ffmpeg contexts
         ictx: FormatContext,
         decoder: DecoderVideo,
-        video_stream_index: usize,
         converter: ScalingContext,
 
+        // internal timestamp bookkeeping
         seek_target_timestamp: i64,
         cur_timestamp: i64,
 
+        // constants/metadata
         end_timestamp: i64,
         first_timestamp: i64,
         timebase: Rational,
+        video_stream_index: usize,
     },
     Done,
 }
@@ -73,11 +79,17 @@ impl FrameExtractor {
             .best(Type::Video)
             .ok_or(ffmpeg::Error::StreamNotFound)?;
         let video_stream_index = video.index();
+        assert_ne!(AV_NOPTS_VALUE, video.start_time());
         let cur_timestamp = video.start_time();
         let seek_target_timestamp = video.start_time();
         let first_timestamp = video.start_time();
-        let end_timestamp = video.duration();
         let timebase = video.time_base();
+        let end_timestamp = if video.duration() == AV_NOPTS_VALUE {
+            assert_ne!(AV_NOPTS_VALUE, ictx.duration());
+            ictx.duration().rescale(AV_TIME_BASE_Q, timebase)
+        } else {
+            video.duration()
+        };
 
         let decoder = CodecContext::from_parameters(video.parameters())?
             .decoder()
@@ -134,7 +146,7 @@ impl FrameExtractor {
             match packet.read(ictx) {
                 Ok(()) => (),
                 Err(ffmpeg::Error::Eof) => {
-                    self.set_done();
+                    self.set_done(); // TODO: remove this whole done business
                     break;
                 }
                 Err(e) => return Err(e.into()),
@@ -172,13 +184,7 @@ impl FrameExtractor {
 
                 let mut converted = FrameVideo::empty();
                 converter.run(&frame, &mut converted)?;
-                assert_eq!(1, converted.planes());
-                let img = RgbImage::from_vec(
-                    converted.width(),
-                    converted.height(),
-                    converted.data(0).to_vec(),
-                )
-                .expect("the buffer is big enough!");
+                let img = create_rust_image(converted);
 
                 let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
                 return Ok(Some((dur, img)));
@@ -199,9 +205,11 @@ impl FrameExtractor {
                     return Ok(());
                 }
                 let target = *cur_timestamp + duration2timestamp(dur, *timebase);
+                // TODO: don't seek, or undo it, if this jumps back, it will just decode
+                // the same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
                 self.seek_internal(target)
             }
-            Self::Done => panic!("can't seek when done"),
+            Self::Done => panic!("can't seek_forward when done"),
         }
     }
 
@@ -220,7 +228,19 @@ impl FrameExtractor {
                 }
                 self.seek_internal(timestamp.timestamp)
             }
-            Self::Done => panic!("can't seek when done"),
+            Self::Done => panic!("can't seek_to when done"),
+        }
+    }
+
+    pub fn seek_to_beginning(&mut self) -> Result<()> {
+        match self {
+            Self::Active {
+                first_timestamp, ..
+            } => {
+                let first_timestamp = *first_timestamp;
+                self.seek_internal(first_timestamp)
+            }
+            Self::Done => panic!("can't seek_to_beginning when done"),
         }
     }
 
@@ -233,18 +253,16 @@ impl FrameExtractor {
                 seek_target_timestamp,
                 ..
             } => {
-                // TODO: don't seek or undo it if this jumps back, it will just decode the
-                // same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
                 seek(ictx, *video_stream_index, target, ..)?;
                 decoder.flush();
                 *seek_target_timestamp = target;
                 Ok(())
             }
-            Self::Done => panic!("can't seek when done"),
+            Self::Done => panic!("can't seek_internal when done"),
         }
     }
 
-    pub fn length(&self) -> Duration {
+    pub fn approx_length(&self) -> Duration {
         match self {
             Self::Active {
                 end_timestamp,
@@ -255,6 +273,38 @@ impl FrameExtractor {
             Self::Done => panic!("can't get length on done"),
         }
     }
+}
+
+fn create_rust_image(converted: FrameVideo) -> RgbImage {
+    assert_eq!(Pixel::RGB24, converted.format());
+    assert_eq!(1, converted.planes());
+
+    let src_linesize = converted.stride(0);
+    let width: usize = converted.width().try_into().expect("will always fit");
+    let height: usize = converted.height().try_into().expect("will always fit");
+    let data = converted.data(0);
+    let trg_linesize = 3 * width;
+
+    // https://stackoverflow.com/a/57666844
+    let data = if src_linesize == trg_linesize {
+        data.to_vec()
+    } else {
+        assert!(src_linesize >= trg_linesize);
+        let mut nopadding = vec![0; trg_linesize * height];
+        for i in 0..height {
+            nopadding[(i * trg_linesize)..((i + 1) * trg_linesize)].copy_from_slice(
+                &data[(i * src_linesize)..(i * src_linesize + trg_linesize)],
+            );
+        }
+        nopadding
+    };
+
+    RgbImage::from_vec(
+        width.try_into().expect("was an u32 before"),
+        height.try_into().expect("was an u32 before"),
+        data,
+    )
+    .expect("the buffer is big enough!")
 }
 
 fn duration2timestamp(dur: Duration, timebase: Rational) -> i64 {
@@ -294,6 +344,32 @@ fn seek<R: ffmpeg::util::range::Range<i64>>(
         ) {
             s if s >= 0 => Ok(()),
             e => Err(ffmpeg::Error::from(e)),
+        }
+    }
+}
+
+impl fmt::Debug for FrameExtractor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Active {
+                first_timestamp,
+                end_timestamp,
+                timebase,
+                cur_timestamp,
+                seek_target_timestamp,
+                ..
+            } => f
+                .debug_struct("FrameExtractor::Active")
+                .field("first_ts", first_timestamp)
+                .field("last_ts", end_timestamp)
+                .field("cur_ts", cur_timestamp)
+                .field(
+                    "tb",
+                    &format_args!("{}/{}", timebase.numerator(), timebase.denominator()),
+                )
+                .field("seek_ts", seek_target_timestamp)
+                .finish(),
+            Self::Done => f.debug_struct("FrameExtractor::Done").finish(),
         }
     }
 }
