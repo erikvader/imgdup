@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use error_stack::{IntoReport, ResultExt};
 use image::RgbImage;
 use imgdup::{
     frame_extractor::FrameExtractor,
@@ -44,18 +45,27 @@ struct Cli {
     videofile: PathBuf,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(thiserror::Error, Debug)]
+#[error("Failed to hash videos or something")]
+struct VidError;
+
+fn main() -> error_stack::Result<(), VidError> {
     let cli = Cli::parse();
 
     match &cli.outdir {
-        Some(dir) if !dir.is_dir() => std::fs::create_dir(dir)?,
+        Some(dir) if !dir.is_dir() => std::fs::create_dir(dir)
+            .into_report()
+            .change_context(VidError)?,
         _ => (),
     }
 
-    let mut extractor = FrameExtractor::new(cli.videofile)?;
-    extractor.seek_forward(cli.offset.into())?;
+    let mut extractor = FrameExtractor::new(cli.videofile).change_context(VidError)?;
+    extractor
+        .seek_forward(cli.offset.into())
+        .change_context(VidError)?;
     let (_, frame) = extractor
-        .next()?
+        .next()
+        .change_context(VidError)?
         .expect("did not get a frame, seeked too far?");
 
     let frame_hash = imghash::hash(&frame);
@@ -90,7 +100,7 @@ fn resolution_test(
     frame_hash: Hamming,
     heights: &[u32],
     outdir: Option<&PathBuf>,
-) -> anyhow::Result<()> {
+) -> error_stack::Result<(), VidError> {
     for h in heights {
         let resized = imgutils::resize_keep_aspect_ratio(frame, *h);
         let filename = format!("resolution_{h}.jpg");
@@ -110,7 +120,7 @@ fn quality_test(
     frame_hash: Hamming,
     heights: &[u32],
     outdir: Option<&PathBuf>,
-) -> anyhow::Result<()> {
+) -> error_stack::Result<(), VidError> {
     for h in heights {
         let resized = imgutils::worsen_quality(frame, *h);
         let filename = format!("quality_{h}.jpg");
@@ -132,7 +142,7 @@ fn consecutive_test(
     _step: Option<humantime::Duration>,
     _outdir: Option<&PathBuf>,
     _extractor: &mut FrameExtractor,
-) -> anyhow::Result<()> {
+) -> error_stack::Result<(), VidError> {
     for _i in 1..=times {
         todo!(
             "what does this really say? It really depends on where in the video this is"
@@ -145,7 +155,7 @@ fn write_image<P1, P2>(
     outdir: Option<P1>,
     filename: P2,
     image: &RgbImage,
-) -> anyhow::Result<()>
+) -> error_stack::Result<(), VidError>
 where
     P1: AsRef<Path>,
     P2: AsRef<Path>,
@@ -154,6 +164,9 @@ where
         let outdir = outdir.as_ref();
         let filename = filename.as_ref();
         println!("Writing {filename:?}");
-        image.save(outdir.join(filename))?;
+        image
+            .save(outdir.join(filename))
+            .into_report()
+            .change_context(VidError)?;
     })
 }

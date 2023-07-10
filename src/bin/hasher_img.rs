@@ -16,7 +16,11 @@ struct Cli {
     pictures: PathBuf,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(thiserror::Error, Debug)]
+#[error("Failed to hash images or something")]
+struct ImgError;
+
+fn main() -> error_stack::Result<(), ImgError> {
     let cli = Cli::parse();
     Ok(())
 }
