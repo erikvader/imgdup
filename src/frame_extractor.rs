@@ -70,13 +70,10 @@ impl FrameExtractor {
     pub fn new(path: PathBuf) -> Result<Self> {
         if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| {
             ffmpeg::init()?;
-            // TODO: Save more logs from maybe level error or warning.
-            // https://www.ffmpeg.org/doxygen/trunk/group__lavu__log__constants.html#ga11e329935b59b83ca722b66674f37fd4
-            // Somehow set a callback with av_log_set_callback.
-            // https://github.com/zmwangx/rust-ffmpeg/pull/91
-            // Give back a list of error messages in the `next` function alongside the
-            // picture?
-            ffmpeglog::set_level(ffmpeglog::Level::Fatal); // TODO:
+            ffmpeglog::set_level(ffmpeglog::Level::Warning);
+            unsafe {
+                ffmpeg_sys_next::av_log_set_callback(Some(ffmpeg_log_adaptor));
+            }
             Ok(())
         }) {
             return Err(report!(e).change_context(FrameExtractorError::FfmpegInitError));
@@ -407,4 +404,78 @@ impl fmt::Debug for FrameExtractor {
             .field("path", path)
             .finish()
     }
+}
+
+extern "C" {
+    pub fn vsnprintf(
+        strbuf: *mut libc::c_char,
+        size: libc::size_t,
+        format: *const libc::c_char,
+        va_list: *mut libc::c_void,
+    ) -> libc::c_int;
+}
+
+unsafe extern "C" fn ffmpeg_log_adaptor(
+    avcl: *mut libc::c_void,
+    level: libc::c_int,
+    fmt: *const libc::c_char,
+    va_list: *mut ffmpeg_sys_next::__va_list_tag,
+) {
+    if level > ffmpeg_sys_next::av_log_get_level() {
+        return;
+    }
+
+    const BUF_SIZE: usize = 2048;
+    let mut buffer: Vec<u8> = vec![1; BUF_SIZE];
+    let retval = vsnprintf(
+        buffer.as_mut_ptr() as *mut libc::c_char,
+        BUF_SIZE,
+        fmt,
+        va_list as *mut libc::c_void,
+    );
+
+    match retval {
+        ..=-1 => {
+            let errno = std::io::Error::last_os_error();
+            eprintln!(
+                "failed to create log message from ffmpeg, vsnprintf returned: {errno}"
+            );
+            return;
+        }
+        written => {
+            buffer.pop();
+            buffer.truncate(written.try_into().expect("is not negative"))
+        }
+    }
+
+    let mut rust_str = match String::from_utf8_lossy(&buffer) {
+        std::borrow::Cow::Borrowed(_) => String::from_utf8_unchecked(buffer),
+        std::borrow::Cow::Owned(s) => s,
+    };
+    rust_str.truncate(rust_str.trim_end().len());
+
+    let class_name = {
+        if !avcl.is_null() {
+            let avcl = *(avcl as *const *const ffmpeg_sys_next::AVClass);
+            std::ffi::CStr::from_ptr((*avcl).class_name).to_string_lossy()
+        } else {
+            "NULL".into()
+        }
+    };
+
+    let target = format!("{}::ffmpeg::'{class_name}'", module_path!());
+    let level = match ffmpeglog::Level::try_from(level) {
+        Ok(ffmpeglog::Level::Verbose) => log::Level::Trace,
+        Ok(ffmpeglog::Level::Trace) => log::Level::Trace,
+        Ok(ffmpeglog::Level::Debug) => log::Level::Debug,
+        Ok(ffmpeglog::Level::Error) => log::Level::Error,
+        Ok(ffmpeglog::Level::Fatal) => log::Level::Error,
+        Ok(ffmpeglog::Level::Panic) => log::Level::Error,
+        Ok(ffmpeglog::Level::Warning) => log::Level::Warn,
+        Ok(ffmpeglog::Level::Quiet) => log::Level::Info,
+        Ok(ffmpeglog::Level::Info) => log::Level::Info,
+        Err(_) => log::Level::Info,
+    };
+
+    log::log!(target: &target, level, "{rust_str}");
 }
