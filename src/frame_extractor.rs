@@ -92,7 +92,7 @@ impl FrameExtractor {
             options.set("probesize", "5M"); // this is the default
             options
         };
-        let ictx = input_with_dictionary(&path, options)
+        let mut ictx = input_with_dictionary(&path, options)
             .into_report()
             .change_context(FrameExtractorError::FailedToOpen)?;
 
@@ -127,6 +127,10 @@ impl FrameExtractor {
 
         let converter = Self::pixel_converter(&decoder)?;
 
+        ictx.streams_mut()
+            .filter(|stream| stream.index() != video_stream_index)
+            .for_each(|mut stream| stream_set_discard_all(&mut stream));
+
         Ok(Self {
             ictx,
             decoder,
@@ -155,6 +159,10 @@ impl FrameExtractor {
         )
         .into_report()
         .change_context(FrameExtractorError::NoCodec)
+    }
+
+    pub fn iter(&mut self) -> FrameExtractorIter {
+        FrameExtractorIter { extractor: self }
     }
 
     pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
@@ -219,7 +227,10 @@ impl FrameExtractor {
                     Ok(()) if packet.stream() == *video_stream_index => {
                         match decoder.send_packet(&packet) {
                             Ok(()) => break,
-                            Err(_) => continue, // TODO: report to user somehow
+                            Err(e) => {
+                                log::error!("Failed to decode frame: {e}");
+                                continue;
+                            }
                         }
                     }
                     Ok(()) => continue,
@@ -307,6 +318,18 @@ impl FrameExtractor {
     }
 }
 
+pub struct FrameExtractorIter<'a> {
+    extractor: &'a mut FrameExtractor,
+}
+
+impl Iterator for FrameExtractorIter<'_> {
+    type Item = Result<(Timestamp, RgbImage)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.extractor.next().transpose()
+    }
+}
+
 fn create_rust_image(converted: FrameVideo) -> RgbImage {
     assert_eq!(Pixel::RGB24, converted.format());
     assert_eq!(1, converted.planes());
@@ -354,6 +377,15 @@ fn timestamp2duration(timestamp: i64, timebase: Rational) -> Duration {
     // NOTE: timestamp * timebase / to_seconds
     let millis = std::cmp::max(0, timestamp.rescale(timebase, to_seconds));
     Duration::from_millis(millis.try_into().expect("probably not a problem"))
+}
+
+fn stream_set_discard_all(stream: &mut ffmpeg::StreamMut<'_>) {
+    unsafe {
+        let ptr = stream.as_mut_ptr();
+        if !ptr.is_null() {
+            (*ptr).discard = ffmpeg_sys_next::AVDiscard::AVDISCARD_ALL;
+        }
+    }
 }
 
 /// A copy of FormatContext::seek, except that this accepts a stream_index to seek on.
