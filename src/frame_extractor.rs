@@ -2,20 +2,21 @@ extern crate ffmpeg_next as ffmpeg;
 
 pub mod timestamp;
 
+use std::borrow::Cow;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{fmt, ptr};
 
-use error_stack::{bail, report, IntoReport, Report, ResultExt};
+use error_stack::{bail, report, IntoReport, ResultExt};
 use ffmpeg::codec::Context as CodecContext;
 use ffmpeg::decoder::Video as DecoderVideo;
 use ffmpeg::format::context::Input as FormatContext;
 use ffmpeg::format::{input_with_dictionary, Pixel};
 use ffmpeg::frame::Video as FrameVideo;
+use ffmpeg::media::Type;
 use ffmpeg::software::scaling::context::Context as ScalingContext;
 use ffmpeg::util::log as ffmpeglog;
-use ffmpeg::{format::input, media::Type};
 use ffmpeg::{Dictionary, Packet as CodecPacket, Rational, Rescale};
 use ffmpeg_sys_next::{AV_NOPTS_VALUE, AV_TIME_BASE_Q};
 use image::RgbImage;
@@ -45,7 +46,7 @@ pub type Result<T> = error_stack::Result<T, FrameExtractorError>;
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
     OnceLock::new();
 
-pub struct FrameExtractor {
+pub struct FrameExtractor<'a> {
     // TODO: probably split into several structs
     // ffmpeg contexts
     ictx: FormatContext,
@@ -63,11 +64,11 @@ pub struct FrameExtractor {
     video_stream_index: usize,
 
     // the file name
-    path: PathBuf,
+    path: Cow<'a, Path>,
 }
 
-impl FrameExtractor {
-    pub fn new(path: PathBuf) -> Result<Self> {
+impl<'a> FrameExtractor<'a> {
+    pub fn new<P: Into<Cow<'a, Path>>>(path: P) -> Result<Self> {
         if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| {
             ffmpeg::init()?;
             ffmpeglog::set_level(ffmpeglog::Level::Warning);
@@ -79,6 +80,7 @@ impl FrameExtractor {
             return Err(report!(e).change_context(FrameExtractorError::FfmpegInitError));
         }
 
+        let path = path.into();
         let mut s = Self::new_inner(&path)
             .attach_printable_lazy(|| format!("on file {:?}", path))?;
         s.path = path; // NOTE: ugly workaround to avoid copying the path
@@ -96,8 +98,6 @@ impl FrameExtractor {
             .into_report()
             .change_context(FrameExtractorError::FailedToOpen)?;
 
-        // TODO: somehow set the discard property on everything, except the video, to
-        // improve seeking. There doesn't seem to be a way to do this in ffmpeg-next 6.0.0
         let video = ictx
             .streams()
             .best(Type::Video)
@@ -141,7 +141,7 @@ impl FrameExtractor {
             seek_target_timestamp,
             first_timestamp,
             timebase,
-            path: PathBuf::new(),
+            path: PathBuf::new().into(),
         })
     }
 
@@ -159,10 +159,6 @@ impl FrameExtractor {
         )
         .into_report()
         .change_context(FrameExtractorError::NoCodec)
-    }
-
-    pub fn iter(&mut self) -> FrameExtractorIter {
-        FrameExtractorIter { extractor: self }
     }
 
     pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
@@ -318,15 +314,21 @@ impl FrameExtractor {
     }
 }
 
-pub struct FrameExtractorIter<'a> {
-    extractor: &'a mut FrameExtractor,
+pub struct FrameExtractorIter<'a, 'p> {
+    extractor: &'a mut FrameExtractor<'p>,
 }
 
-impl Iterator for FrameExtractorIter<'_> {
+impl Iterator for FrameExtractorIter<'_, '_> {
     type Item = Result<(Timestamp, RgbImage)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.extractor.next().transpose()
+    }
+}
+
+impl<'a, 'p> FrameExtractor<'p> {
+    pub fn iter(&'a mut self) -> FrameExtractorIter<'a, 'p> {
+        FrameExtractorIter { extractor: self }
     }
 }
 
@@ -412,7 +414,7 @@ fn seek<R: ffmpeg::util::range::Range<i64>>(
     }
 }
 
-impl fmt::Debug for FrameExtractor {
+impl fmt::Debug for FrameExtractor<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             first_timestamp,
