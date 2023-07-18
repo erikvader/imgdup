@@ -4,3 +4,4 @@ pub mod heap;
 pub mod imghash;
 pub mod imgutils;
 pub mod log;
+pub mod perf;

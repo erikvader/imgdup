@@ -48,3 +48,7 @@ pub fn filled(width: u32, height: u32, red: u8, green: u8, blue: u8) -> RgbImage
         .for_each(|(_, _, pixel)| *pixel = image::Rgb([red, green, blue]));
     buf
 }
+
+// TODO: function to prepare image for hashing
+// TODO: function for removing borders
+// TODO: en executable som kör prepare_image. Använd i integrationstest helst, annars video_tests

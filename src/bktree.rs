@@ -10,6 +10,8 @@ use crate::{
 
 type Timestamp = u64; // TODO: replace
 
+// TODO: flytta på source och ta in som typparameter i BKNode? Vill helst undvika typer
+// specifika för frameextractor här
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Source {
     Video { frame_pos: Timestamp, path: PathBuf },
