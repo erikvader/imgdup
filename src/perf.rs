@@ -15,6 +15,9 @@ pub struct TimeSeries {
     measurements: Vec<Measurement>,
 }
 
+// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
+// http://www.johndcook.com/blog/standard_deviation/
+// Räknar ut snitt, avvikelse, min och max
 pub struct Stats; // TODO:
 
 struct Perf {
@@ -67,6 +70,18 @@ impl TimeSeries {
 
     pub fn measurements(&self) -> &[Measurement] {
         &self.measurements
+    }
+
+    pub fn start(&self) -> Instant {
+        self.measurements.first().expect("cannot be empty").start()
+    }
+
+    pub fn end(&self) -> Instant {
+        self.measurements.last().expect("cannot be empty").end()
+    }
+
+    pub fn duration(&self) -> Duration {
+        self.end() - self.start()
     }
 }
 
@@ -122,6 +137,9 @@ pub fn end(id: ID, cookie: Cookie) {
 
 // TODO:
 // pub fn subscribe(id: ID) -> Receiver<Stats> {}
+// Probably a much better idea:
+// pub fn subscribe(id: ID);
+// pub fn stats(id: ID) -> Option<Stats> {}
 
 pub fn finish() -> HashMap<ID, TimeSeries> {
     enable(false);
@@ -129,6 +147,10 @@ pub fn finish() -> HashMap<ID, TimeSeries> {
     series.values_mut().for_each(|v| v.sort());
     series
 }
+
+// TODO:
+//pub fn save(&[TimeSeries])
+//pub fn save() -> Vec<TimeSeries>
 
 #[macro_export]
 macro_rules! perf {
