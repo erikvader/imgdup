@@ -1,3 +1,4 @@
+// TODO: remove?
 struct MyLogger;
 
 static MY_LOGGER: MyLogger = MyLogger;

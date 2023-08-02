@@ -5,10 +5,11 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1"
-error-stack = "0.3"
+color-eyre = "0.6"
 log = "0.4"
 
 # For main application threads
+# TODO: maybe remove
 crossbeam = "0.5"
 
 # For plotting perf.rs and stuff (and generating imgdup debug info?)

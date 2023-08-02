@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use error_stack::{bail, report, IntoReport, ResultExt};
+use color_eyre::eyre::{self, Context};
 use ffmpeg::codec::Context as CodecContext;
 use ffmpeg::decoder::Video as DecoderVideo;
 use ffmpeg::format::context::Input as FormatContext;
@@ -23,25 +23,26 @@ use image::RgbImage;
 
 use self::timestamp::Timestamp;
 
-#[derive(thiserror::Error, Debug)]
-pub enum FrameExtractorError {
-    #[error("Timestamp does not seem to originate from the same file")]
-    TimestampMismatch,
-    #[error("Cannot initialize ffmpeg")]
-    FfmpegInitError,
-    #[error("Failed to open")]
-    FailedToOpen,
-    #[error("No video stream")]
-    NoVideoStream,
-    #[error("Failed to open codec")]
-    NoCodec,
-    #[error("Failed to seek")]
-    Seek,
-    #[error("Failed to decode frame")]
-    Decode,
-}
+// TODO: remove
+// #[derive(thiserror::Error, Debug)]
+// pub enum FrameExtractorError {
+//     #[error("Timestamp does not seem to originate from the same file")]
+//     TimestampMismatch,
+//     #[error("Cannot initialize ffmpeg")]
+//     FfmpegInitError,
+//     #[error("Failed to open")]
+//     FailedToOpen,
+//     #[error("No video stream")]
+//     NoVideoStream,
+//     #[error("Failed to open codec")]
+//     NoCodec,
+//     #[error("Failed to seek")]
+//     Seek,
+//     #[error("Failed to decode frame")]
+//     Decode,
+// }
 
-pub type Result<T> = error_stack::Result<T, FrameExtractorError>;
+pub type Result<T> = eyre::Result<T>;
 
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
     OnceLock::new();
@@ -77,12 +78,12 @@ impl<'a> FrameExtractor<'a> {
             }
             Ok(())
         }) {
-            return Err(report!(e).change_context(FrameExtractorError::FfmpegInitError));
+            return Err(e).wrap_err("Failed to initialize ffmpeg");
         }
 
         let path = path.into();
-        let mut s = Self::new_inner(&path)
-            .attach_printable_lazy(|| format!("on file {:?}", path))?;
+        let mut s =
+            Self::new_inner(&path).wrap_err_with(|| format!("on file {:?}", path))?;
         s.path = path; // NOTE: ugly workaround to avoid copying the path
         Ok(s)
     }
@@ -94,15 +95,13 @@ impl<'a> FrameExtractor<'a> {
             options.set("probesize", "5M"); // this is the default
             options
         };
-        let mut ictx = input_with_dictionary(&path, options)
-            .into_report()
-            .change_context(FrameExtractorError::FailedToOpen)?;
+        let mut ictx =
+            input_with_dictionary(&path, options).wrap_err("Failed to open the file")?;
 
         let video = ictx
             .streams()
             .best(Type::Video)
-            .ok_or(FrameExtractorError::NoVideoStream)
-            .into_report()?;
+            .ok_or(eyre::eyre!("No video stream"))?;
 
         let video_stream_index = video.index();
         assert_ne!(AV_NOPTS_VALUE, video.start_time());
@@ -118,12 +117,10 @@ impl<'a> FrameExtractor<'a> {
         };
 
         let decoder = CodecContext::from_parameters(video.parameters())
-            .into_report()
-            .change_context(FrameExtractorError::NoCodec)?
+            .wrap_err("No codec found")?
             .decoder()
             .video()
-            .into_report()
-            .change_context(FrameExtractorError::NoCodec)?;
+            .wrap_err("No codec found, of type video (?)")?;
 
         let converter = Self::pixel_converter(&decoder)?;
 
@@ -147,7 +144,7 @@ impl<'a> FrameExtractor<'a> {
 
     fn pixel_converter(decoder: &DecoderVideo) -> Result<ScalingContext> {
         assert_ne!(Pixel::None, decoder.format());
-        ScalingContext::get(
+        Ok(ScalingContext::get(
             decoder.format(),
             decoder.width(),
             decoder.height(),
@@ -156,14 +153,12 @@ impl<'a> FrameExtractor<'a> {
             decoder.width(),
             decoder.height(),
             ffmpeg::software::scaling::Flags::FAST_BILINEAR,
-        )
-        .into_report()
-        .change_context(FrameExtractorError::NoCodec)
+        )?)
     }
 
     pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
         self.next_inner()
-            .attach_printable_lazy(|| format!("on file {:?}", self.path))
+            .wrap_err_with(|| format!("on file {:?}", self.path))
     }
 
     fn next_inner(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
@@ -193,7 +188,8 @@ impl<'a> FrameExtractor<'a> {
                     // https://ffmpeg.org/doxygen/trunk/avcodec_8h_source.html
                     Err(ffmpeg::Error::Eof) => return Ok(None),
                     Err(e) => {
-                        return Err(report!(e).change_context(FrameExtractorError::Decode))
+                        return Err(e)
+                            .wrap_err("Decoder error when receiving a frame from it");
                     }
                 }
 
@@ -208,8 +204,7 @@ impl<'a> FrameExtractor<'a> {
                 let mut converted = FrameVideo::empty();
                 converter
                     .run(&frame, &mut converted)
-                    .into_report()
-                    .change_context(FrameExtractorError::Decode)?;
+                    .wrap_err("Failed to convert the decoded frame")?;
                 let img = create_rust_image(converted);
 
                 let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
@@ -233,12 +228,11 @@ impl<'a> FrameExtractor<'a> {
                     Err(ffmpeg::Error::Eof) => {
                         decoder
                             .send_eof()
-                            .into_report()
-                            .change_context(FrameExtractorError::Decode)?;
+                            .wrap_err("Failed to send EOF to the decoder")?;
                         break;
                     }
                     Err(e) => {
-                        return Err(report!(e).change_context(FrameExtractorError::Decode))
+                        eyre::bail!("Failed to read a packet from the stream");
                     }
                 }
             }
@@ -253,9 +247,9 @@ impl<'a> FrameExtractor<'a> {
         let target = self.cur_timestamp + duration2timestamp(dur, self.timebase);
         // TODO: don't seek, or undo it, if this jumps back, it will just decode
         // the same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
-        self.seek_internal(target).attach_printable_lazy(|| {
+        self.seek_internal(target).wrap_err_with(|| {
             format!(
-                "tried to seek forward {} from {}",
+                "Failed when trying to seek forward {} from {}",
                 humantime::Duration::from(dur),
                 humantime::Duration::from(timestamp2duration(
                     self.cur_timestamp,
@@ -270,18 +264,20 @@ impl<'a> FrameExtractor<'a> {
             || timestamp.timebase_numerator != self.timebase.numerator()
             || timestamp.timebase_denominator != self.timebase.denominator()
         {
-            bail!(FrameExtractorError::TimestampMismatch)
+            eyre::bail!("The given timestamp does not seem to match with the file");
         }
 
         self.seek_internal(timestamp.timestamp)
-            .attach_printable_lazy(|| format!("seeking to {:?}", timestamp))
+            .wrap_err_with(|| format!("Failed when seeking to {:?}", timestamp))
     }
 
     pub fn seek_to_beginning(&mut self) -> Result<()> {
-        self.seek_internal(self.first_timestamp)
-            .attach_printable_lazy(|| {
-                format!("seeking to the beginning at {}", self.first_timestamp)
-            })
+        self.seek_internal(self.first_timestamp).wrap_err_with(|| {
+            format!(
+                "Failed to seek to the beginning at {}",
+                self.first_timestamp
+            )
+        })
     }
 
     fn seek_internal(&mut self, target: i64) -> Result<()> {
@@ -294,9 +290,7 @@ impl<'a> FrameExtractor<'a> {
         } = self;
 
         seek(ictx, *video_stream_index, target, ..)
-            .into_report()
-            .change_context(FrameExtractorError::Seek)
-            .attach_printable_lazy(|| format!("on file {:?}", self.path))?;
+            .wrap_err_with(|| format!("Failed to seek on file {:?}", self.path))?;
         decoder.flush();
         *seek_target_timestamp = target;
         Ok(())

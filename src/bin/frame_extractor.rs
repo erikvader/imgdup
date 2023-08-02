@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use error_stack::{IntoReport, ResultExt};
+use color_eyre::eyre;
 use imgdup::frame_extractor::FrameExtractor;
 
 #[derive(Parser)]
 #[command()]
+/// Extract frames from a video file
 struct Cli {
     /// How long between each frame
     #[arg(long, default_value = "1s")]
@@ -27,37 +28,26 @@ struct Cli {
     videofile: PathBuf,
 }
 
-#[derive(thiserror::Error, Debug)]
-#[error("Failed to extract frames")]
-struct ExtError;
-
-fn main() -> error_stack::Result<(), ExtError> {
+fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
     let cli = Cli::parse();
 
     if !cli.outdir.is_dir() {
-        std::fs::create_dir(&cli.outdir)
-            .into_report()
-            .change_context(ExtError)?;
+        std::fs::create_dir(&cli.outdir)?;
     }
 
-    let mut extractor = FrameExtractor::new(cli.videofile).change_context(ExtError)?;
-    extractor
-        .seek_forward(cli.offset.into())
-        .change_context(ExtError)?;
+    let mut extractor = FrameExtractor::new(cli.videofile)?;
+    extractor.seek_forward(cli.offset.into())?;
     for i in 1..=cli.num {
-        match extractor.next().change_context(ExtError)? {
+        match extractor.next()? {
             Some((ts, img)) => {
                 let frame_filename = format!("frame_{}_{}.jpg", i, ts.to_string());
                 println!("Writing {:?}", frame_filename);
-                img.save(cli.outdir.join(frame_filename))
-                    .into_report()
-                    .change_context(ExtError)?;
+                img.save(cli.outdir.join(frame_filename))?;
             }
             None => break,
         }
-        extractor
-            .seek_forward(cli.step.into())
-            .change_context(ExtError)?;
+        extractor.seek_forward(cli.step.into())?;
     }
 
     Ok(())
