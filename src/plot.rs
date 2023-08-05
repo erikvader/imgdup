@@ -2,19 +2,23 @@ use color_eyre::eyre;
 use plotters::prelude::*;
 use std::path::Path;
 
-pub fn bar_chart(path: impl AsRef<Path>, bars: &[(&str, i32)]) -> eyre::Result<()> {
+pub fn bar_chart<X, P>(path: P, bars: &[(X, u32)]) -> eyre::Result<()>
+where
+    P: AsRef<Path>,
+    X: ToString,
+{
     assert!(!bars.is_empty());
     let width = 50 + 100 * bars.len();
     let max_val = bars.iter().map(|(_, val)| *val).max().unwrap();
 
-    let root = SVGBackend::new(&path, (width as u32, 600)).into_drawing_area();
+    let root = SVGBackend::new(&path, (width as u32, 800)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption("This is my first plot", ("sans-serif", 20).into_font())
+        // .caption("This is my first plot", ("sans-serif", 20).into_font())
         .margin(5)
         .set_left_and_bottom_label_area_size(20)
-        .build_cartesian_2d((1..bars.len()).into_segmented(), 0..max_val)?;
+        .build_cartesian_2d((1..bars.len()).into_segmented(), (0..max_val).log_scale())?;
 
     chart
         .configure_mesh()
@@ -23,6 +27,7 @@ pub fn bar_chart(path: impl AsRef<Path>, bars: &[(&str, i32)]) -> eyre::Result<(
             SegmentValue::CenterOf(i) => bars[*i - 1].0.to_string(),
             SegmentValue::Last => "last??".to_string(),
         })
+        .x_labels(bars.len())
         .draw()?;
 
     chart.draw_series(

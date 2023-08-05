@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Extracts a random frame from each video in the folder given as the first argument
+
 set -e
 
 OUTDIR=frames

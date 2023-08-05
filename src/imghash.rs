@@ -1,4 +1,4 @@
-use std::cell::OnceCell;
+use std::{cell::OnceCell, path::Path};
 
 use self::hamming::Hamming;
 
@@ -35,6 +35,11 @@ where
     I: image_hasher::Image,
 {
     HASHER.with(|h| h.get_or_init(|| Hasher::new()).hash(img))
+}
+
+pub fn hash_from_path(path: &Path) -> image::ImageResult<Hamming> {
+    let img = image::open(path)?;
+    Ok(hash(&img))
 }
 
 #[cfg(test)]

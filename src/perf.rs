@@ -22,7 +22,7 @@ pub struct Stats; // TODO:
 
 struct Perf {
     series: Mutex<HashMap<ID, TimeSeries>>,
-    stats: Mutex<HashMap<ID, Stats>>,
+    stats: Mutex<HashMap<ID, Stats>>, // TODO: ta bort? Vill inte ha live performance längre?
 }
 
 impl Perf {
