@@ -3,24 +3,31 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, BufWriter, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use clap::Parser;
-use image::RgbImage;
 use imgdup::{
-    frame_extractor::FrameExtractor,
     imghash::{
         self,
         hamming::{Distance, Hamming},
     },
-    imgutils, plot,
+    imgutils::{self, RemoveBordersConf},
+    plot,
 };
 
 #[derive(Parser)]
 #[command()]
 /// Hash pictures and compare them against each other
 struct Cli {
+    /// All gray values below this becomes black
+    #[arg(long, short = 't', default_value_t = imgutils::DEFAULT_MASKIFY_THRESHOLD)]
+    maskify_threshold: u8,
+
+    /// A mask line can contain this many percent of white and still be considered black
+    #[arg(long, short = 'w', default_value_t = imgutils::DEFAULT_BORDER_MAX_WHITES)]
+    maximum_whites: f64,
+
     /// Folders with pictures in them
     #[arg(required = true)]
     picture_folders: Vec<PathBuf>,
@@ -34,7 +41,12 @@ fn main() -> eyre::Result<()> {
     let pictures = all_files(&cli.picture_folders)?;
 
     println!("Hashing all pictures...");
-    let hashes = hash_pictures(&pictures)?;
+    let hashes = hash_pictures(
+        &pictures,
+        RemoveBordersConf::default()
+            .with_maskify_threshold(cli.maskify_threshold)
+            .with_maximum_whites(cli.maximum_whites),
+    )?;
 
     println!("Comparing all distances...");
     let pairwise = compare_all(&hashes);
@@ -63,14 +75,31 @@ fn all_files(folders: &[PathBuf]) -> eyre::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn hash_pictures(pictures: &[PathBuf]) -> image::ImageResult<Vec<Hamming>> {
+fn hash_pictures(
+    pictures: &[PathBuf],
+    config: RemoveBordersConf,
+) -> image::ImageResult<Vec<Hamming>> {
+    let mut file = BufWriter::new(File::create("empty.txt")?);
+
     let mut hashes = vec![];
     let total = pictures.len();
-    for (i, pic) in pictures.iter().enumerate() {
+    for (i, pic_path) in pictures.iter().enumerate() {
         println!("Hash: {}/{}", i + 1, total);
-        let h = imghash::hash_from_path(pic)?;
+        let img = image::open(pic_path)?.to_rgb8();
+        let cropped = imgutils::remove_borders(&img, &config).to_image();
+
+        if imgutils::img_empty(&cropped) {
+            println!("Empty: {pic_path:?}");
+            writeln!(&mut file, "{:?}", pic_path.display())?;
+            continue;
+        }
+
+        let h = imghash::hash(&cropped);
         hashes.push(h);
     }
+
+    file.flush()?;
+
     Ok(hashes)
 }
 
@@ -104,13 +133,13 @@ fn write_text_files(
     for (i, pic) in pictures.iter().enumerate() {
         writeln!(&mut file, "{:04}: {}", i, pic.display())?;
     }
-    file.into_inner()?.sync_all()?;
+    file.flush()?;
 
     let mut file = BufWriter::new(File::create("distances.txt")?);
     for (i, j, dist) in pairwise {
         writeln!(&mut file, "{i:04}-{j:04}={dist}")?;
     }
-    file.into_inner()?.sync_all()?;
+    file.flush()?;
 
     Ok(())
 }

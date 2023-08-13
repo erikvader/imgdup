@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser};
 use color_eyre::eyre::{self, Context};
 use image::{DynamicImage, GenericImageView, RgbImage};
-use imgdup::{frame_extractor::FrameExtractor, imgutils};
+use imgdup::{
+    frame_extractor::FrameExtractor,
+    imgutils::{self, RemoveBordersConf},
+};
 use rand::{thread_rng, Rng};
 
 #[derive(Parser)]
@@ -15,11 +18,11 @@ struct Cli {
     maskify: bool,
 
     /// All gray values below this becomes black
-    #[arg(long, short = 't', default_value_t = 20)]
+    #[arg(long, short = 't', default_value_t = imgutils::DEFAULT_MASKIFY_THRESHOLD)]
     maskify_threshold: u8,
 
     /// A mask line can contain this many percent of white and still be considered black
-    #[arg(long, short = 'w', default_value_t = 0.03)]
+    #[arg(long, short = 'w', default_value_t = imgutils::DEFAULT_BORDER_MAX_WHITES)]
     maximum_whites: f64,
 
     /// Where to save the resulting image
@@ -42,8 +45,12 @@ fn main() -> eyre::Result<()> {
     let output: DynamicImage = if cli.maskify {
         imgutils::maskify(&input, cli.maskify_threshold).into()
     } else {
-        let cropped =
-            imgutils::remove_borders(&input, cli.maskify_threshold, cli.maximum_whites);
+        let cropped = imgutils::remove_borders(
+            &input,
+            &RemoveBordersConf::default()
+                .with_maskify_threshold(cli.maskify_threshold)
+                .with_maximum_whites(cli.maximum_whites),
+        );
         println!("cropped: {:?}", cropped.bounds());
         cropped.to_image().into()
     };

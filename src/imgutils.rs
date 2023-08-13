@@ -1,17 +1,41 @@
-use std::ops::Deref;
-use std::path::Path;
-
 use image::imageops::{self, crop_imm, FilterType};
 use image::math::Rect;
-use image::{
-    DynamicImage, EncodableLayout, GenericImageView, GrayImage, ImageBuffer, Pixel,
-    PixelWithColorType, RgbImage, SubImage,
-};
+use image::{GenericImageView, GrayImage, ImageBuffer, Pixel, RgbImage, SubImage};
 
 pub use image::imageops::colorops::grayscale;
 
-const WHITE: u8 = u8::MAX;
-const BLACK: u8 = u8::MIN;
+pub const WHITE: u8 = u8::MAX;
+pub const BLACK: u8 = u8::MIN;
+
+pub const DEFAULT_MASKIFY_THRESHOLD: u8 = 20;
+pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.03;
+
+#[derive(Copy, Clone)]
+pub struct RemoveBordersConf {
+    pub maskify_threshold: u8,
+    pub maximum_whites: f64,
+}
+
+impl Default for RemoveBordersConf {
+    fn default() -> Self {
+        Self {
+            maskify_threshold: DEFAULT_MASKIFY_THRESHOLD,
+            maximum_whites: DEFAULT_BORDER_MAX_WHITES,
+        }
+    }
+}
+
+impl RemoveBordersConf {
+    pub fn with_maskify_threshold(mut self, threshold: u8) -> Self {
+        self.maskify_threshold = threshold;
+        self
+    }
+
+    pub fn with_maximum_whites(mut self, max: f64) -> Self {
+        self.maximum_whites = max;
+        self
+    }
+}
 
 pub fn resize_keep_aspect_ratio<I: GenericImageView>(
     image: &I,
@@ -64,13 +88,12 @@ pub fn construct_gray(raw: &[&[u8]]) -> GrayImage {
     })
 }
 
-pub fn remove_borders(
-    img: &RgbImage,
-    maskify_threshold: u8,
-    maximum_whites: f64,
-) -> SubImage<&RgbImage> {
-    let mask = maskify(img, maskify_threshold);
-    let bbox = watermark_getbbox(&mask, maximum_whites);
+pub fn remove_borders<'a>(
+    img: &'a RgbImage,
+    config: &RemoveBordersConf,
+) -> SubImage<&'a RgbImage> {
+    let mask = maskify(img, config.maskify_threshold);
+    let bbox = watermark_getbbox(&mask, config.maximum_whites);
     crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
 }
 
@@ -160,7 +183,7 @@ mod test {
             bbox
         );
 
-        let cropped = remove_borders(&black, 0, 0.0);
+        let cropped = remove_borders(&black, &RemoveBordersConf::default());
         assert!(img_empty(&*cropped));
         assert!(subimg_empty(&cropped));
     }

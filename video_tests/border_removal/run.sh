@@ -10,12 +10,9 @@ MASKS=masks
 rm -rf "$MASKS" "$OUTPUT"
 mkdir -p "$MASKS" "$OUTPUT"
 
-threshold=${1:-20}
-maxwhites=${2:-0.03}
-
 for pic in pics/*.jpg; do
     fname=$(basename "$pic" .jpg)
     echo "file: $fname"
-    "$EXE" -o "$MASKS/$fname.jpg" --maskify -t "$threshold" "$pic" >/dev/null
-    "$EXE" -o "$OUTPUT/$fname.jpg" -t "$threshold" -w "$maxwhites" "$pic"
+    "$EXE" -o "$MASKS/$fname.jpg" --maskify "$@" "$pic" >/dev/null
+    "$EXE" -o "$OUTPUT/$fname.jpg" "$@" "$pic"
 done
