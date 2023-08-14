@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, BufWriter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use clap::Parser;
@@ -27,6 +27,10 @@ struct Cli {
     /// A mask line can contain this many percent of white and still be considered black
     #[arg(long, short = 'w', default_value_t = imgutils::DEFAULT_BORDER_MAX_WHITES)]
     maximum_whites: f64,
+
+    /// Save all collisions below this distance
+    #[arg(long, short = 'c')]
+    save_collisions: Option<Distance>,
 
     /// Folders with pictures in them
     #[arg(required = true)]
@@ -58,6 +62,11 @@ fn main() -> eyre::Result<()> {
     println!("Writing the graph...");
     write_graph_file(&distances)?;
 
+    if let Some(max_dist) = cli.save_collisions {
+        println!("Creating collision symlinks...");
+        point_collisions(&pictures, &pairwise, max_dist)?;
+    }
+
     Ok(())
 }
 
@@ -75,11 +84,48 @@ fn all_files(folders: &[PathBuf]) -> eyre::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+pub fn symlink(point: impl AsRef<Path>, filename: impl AsRef<Path>) -> io::Result<()> {
+    let point = match point.as_ref() {
+        p if p.is_relative() => std::env::current_dir()?.join(p),
+        p => p.to_path_buf(),
+    };
+
+    let filename = match filename.as_ref() {
+        f if f.is_dir() => f.join(point.file_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "point path does not refer to anything",
+            )
+        })?),
+        f => f.to_path_buf(),
+    };
+
+    std::os::unix::fs::symlink(point, filename)
+}
+
+pub fn clear_dir(dir: impl AsRef<Path>) -> io::Result<()> {
+    let dir = dir.as_ref();
+    match fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() => {
+            fs::remove_dir_all(dir)?;
+            fs::create_dir(dir)
+        }
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "dir is not a dir",
+        )),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir(dir),
+        Err(e) => Err(e),
+    }
+}
+
 fn hash_pictures(
     pictures: &[PathBuf],
     config: RemoveBordersConf,
 ) -> image::ImageResult<Vec<Hamming>> {
     let mut file = BufWriter::new(File::create("empty.txt")?);
+    let empty_dir = Path::new("empty");
+    clear_dir(&empty_dir)?;
 
     let mut hashes = vec![];
     let total = pictures.len();
@@ -91,6 +137,7 @@ fn hash_pictures(
         if imgutils::img_empty(&cropped) {
             println!("Empty: {pic_path:?}");
             writeln!(&mut file, "{:?}", pic_path.display())?;
+            symlink(pic_path, empty_dir)?;
             continue;
         }
 
@@ -152,4 +199,42 @@ fn write_graph_file(distances: &HashMap<Distance, u32>) -> eyre::Result<()> {
     bars.sort_unstable();
 
     plot::bar_chart("distances.svg", &bars)
+}
+
+fn point_collisions(
+    pictures: &[PathBuf],
+    pairwise: &[(usize, usize, Distance)],
+    max_dist: Distance,
+) -> eyre::Result<()> {
+    let col_dir = Path::new("collisions");
+    clear_dir(&col_dir)?;
+
+    for (i, (p1, p2, dist)) in pairwise.iter().enumerate() {
+        if *dist > max_dist {
+            continue;
+        }
+
+        let dir = col_dir.join(i.to_string());
+        fs::create_dir(&dir).wrap_err_with(|| format!("Could not create dir {i}"))?;
+
+        let p1 = &pictures[*p1];
+        let p2 = &pictures[*p2];
+
+        symlink(p1, &dir).wrap_err_with(|| {
+            format!(
+                "Could not create symlink to {} at {}",
+                p1.display(),
+                dir.display()
+            )
+        })?;
+        symlink(p2, &dir).wrap_err_with(|| {
+            format!(
+                "Could not create symlink to {} at {}",
+                p2.display(),
+                dir.display()
+            )
+        })?;
+    }
+
+    Ok(())
 }
