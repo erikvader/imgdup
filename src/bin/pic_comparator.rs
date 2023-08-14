@@ -52,6 +52,8 @@ fn main() -> eyre::Result<()> {
             .with_maximum_whites(cli.maximum_whites),
     )?;
 
+    assert_eq!(hashes.len(), pictures.len());
+
     println!("Comparing all distances...");
     let pairwise = compare_all(&hashes);
     let distances = count_distances(&pairwise);
@@ -119,10 +121,14 @@ pub fn clear_dir(dir: impl AsRef<Path>) -> io::Result<()> {
     }
 }
 
+pub fn path_as_filename(p: impl AsRef<Path>) -> String {
+    p.as_ref().display().to_string().replace('/', "!")
+}
+
 fn hash_pictures(
     pictures: &[PathBuf],
     config: RemoveBordersConf,
-) -> image::ImageResult<Vec<Hamming>> {
+) -> image::ImageResult<Vec<Option<Hamming>>> {
     let mut file = BufWriter::new(File::create("empty.txt")?);
     let empty_dir = Path::new("empty");
     clear_dir(&empty_dir)?;
@@ -134,14 +140,15 @@ fn hash_pictures(
         let img = image::open(pic_path)?.to_rgb8();
         let cropped = imgutils::remove_borders(&img, &config).to_image();
 
-        if imgutils::img_empty(&cropped) {
+        let h = if imgutils::img_empty(&cropped) {
             println!("Empty: {pic_path:?}");
             writeln!(&mut file, "{:?}", pic_path.display())?;
-            symlink(pic_path, empty_dir)?;
-            continue;
-        }
+            symlink(pic_path, empty_dir).ok();
+            None
+        } else {
+            Some(imghash::hash(&cropped))
+        };
 
-        let h = imghash::hash(&cropped);
         hashes.push(h);
     }
 
@@ -150,11 +157,19 @@ fn hash_pictures(
     Ok(hashes)
 }
 
-fn compare_all(hashes: &[Hamming]) -> Vec<(usize, usize, Distance)> {
+fn compare_all(hashes: &[Option<Hamming>]) -> Vec<(usize, usize, Distance)> {
     let mut dists = Vec::with_capacity(hashes.len() * (hashes.len() + 1) / 2);
     for (i, h1) in hashes.iter().enumerate() {
+        if h1.is_none() {
+            continue;
+        }
+
         for (j, h2) in hashes[i + 1..].iter().enumerate() {
-            let d = h1.distance_to(*h2);
+            if h2.is_none() {
+                continue;
+            }
+
+            let d = h1.unwrap().distance_to(h2.unwrap());
             dists.push((i, j + i + 1, d));
         }
     }
@@ -209,6 +224,17 @@ fn point_collisions(
     let col_dir = Path::new("collisions");
     clear_dir(&col_dir)?;
 
+    fn linkit(pic: &PathBuf, dir: &Path) -> eyre::Result<()> {
+        let target = dir.join(path_as_filename(pic));
+        symlink(pic, &target).wrap_err_with(|| {
+            format!(
+                "Could not create symlink to {} at {}",
+                pic.display(),
+                target.display()
+            )
+        })
+    }
+
     for (i, (p1, p2, dist)) in pairwise.iter().enumerate() {
         if *dist > max_dist {
             continue;
@@ -217,23 +243,8 @@ fn point_collisions(
         let dir = col_dir.join(i.to_string());
         fs::create_dir(&dir).wrap_err_with(|| format!("Could not create dir {i}"))?;
 
-        let p1 = &pictures[*p1];
-        let p2 = &pictures[*p2];
-
-        symlink(p1, &dir).wrap_err_with(|| {
-            format!(
-                "Could not create symlink to {} at {}",
-                p1.display(),
-                dir.display()
-            )
-        })?;
-        symlink(p2, &dir).wrap_err_with(|| {
-            format!(
-                "Could not create symlink to {} at {}",
-                p2.display(),
-                dir.display()
-            )
-        })?;
+        linkit(&pictures[*p1], &dir)?;
+        linkit(&pictures[*p2], &dir)?;
     }
 
     Ok(())
