@@ -1,5 +1,5 @@
 pub type Distance = u32;
-pub type Container = u64;
+pub type Container = u128;
 
 #[derive(
     Clone,

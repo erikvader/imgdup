@@ -7,7 +7,7 @@ pub use image::imageops::colorops::grayscale;
 pub const WHITE: u8 = u8::MAX;
 pub const BLACK: u8 = u8::MIN;
 
-pub const DEFAULT_MASKIFY_THRESHOLD: u8 = 20;
+pub const DEFAULT_MASKIFY_THRESHOLD: u8 = 40;
 pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.03;
 
 #[derive(Copy, Clone)]

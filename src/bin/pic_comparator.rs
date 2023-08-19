@@ -240,7 +240,7 @@ fn point_collisions(
             continue;
         }
 
-        let dir = col_dir.join(i.to_string());
+        let dir = col_dir.join(format!("{dist}_{i}"));
         fs::create_dir(&dir).wrap_err_with(|| format!("Could not create dir {i}"))?;
 
         linkit(&pictures[*p1], &dir)?;
