@@ -1,5 +1,6 @@
 pub mod bktree;
 pub mod frame_extractor;
+pub mod fsutils;
 pub mod heap;
 pub mod imghash;
 pub mod imgutils;

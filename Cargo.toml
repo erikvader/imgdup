@@ -7,10 +7,7 @@ edition = "2021"
 thiserror = "1"
 color-eyre = "0.6"
 log = "0.4"
-
-# For main application threads
-# TODO: maybe remove
-crossbeam = "0.5"
+simplelog = "0.12"
 
 # For plotting perf.rs and stuff (and generating imgdup debug info?)
 # TODO: reduce features

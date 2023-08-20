@@ -4,7 +4,7 @@ use self::hamming::{Distance, Hamming};
 
 pub mod hamming;
 
-pub const SIMILARITY_THRESHOLD: Distance = 32;
+pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 32;
 
 thread_local! {
     static HASHER: OnceCell<Hasher> = OnceCell::new();

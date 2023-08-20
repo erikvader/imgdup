@@ -68,6 +68,7 @@ impl HeapBuilder {
     pub fn new() -> Self {
         Self {
             config: Config {
+                // TODO: make these tweakable from CLI arguments
                 cache_capacity: 2048,
                 dirtyness_limit: 128,
                 maximum_block_size: 10,

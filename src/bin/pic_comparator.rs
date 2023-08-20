@@ -8,6 +8,7 @@ use std::{
 
 use clap::Parser;
 use imgdup::{
+    fsutils::{all_files, clear_dir, path_as_filename, symlink},
     imghash::{
         self,
         hamming::{Distance, Hamming},
@@ -42,7 +43,7 @@ fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
 
     println!("Finding all filenames...");
-    let pictures = all_files(&cli.picture_folders)?;
+    let pictures: Vec<_> = all_files(&cli.picture_folders)?;
 
     println!("Hashing all pictures...");
     let hashes = hash_pictures(
@@ -70,59 +71,6 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
-}
-
-fn all_files(folders: &[PathBuf]) -> eyre::Result<Vec<PathBuf>> {
-    let mut files = vec![];
-    for dir in folders {
-        for pic in fs::read_dir(&dir)
-            .wrap_err_with(|| format!("Failed to read contents of: {dir:?}"))?
-        {
-            let pic =
-                pic.wrap_err_with(|| format!("Failed to read an entry of: {dir:?}"))?;
-            files.push(pic.path());
-        }
-    }
-    Ok(files)
-}
-
-pub fn symlink(point: impl AsRef<Path>, filename: impl AsRef<Path>) -> io::Result<()> {
-    let point = match point.as_ref() {
-        p if p.is_relative() => std::env::current_dir()?.join(p),
-        p => p.to_path_buf(),
-    };
-
-    let filename = match filename.as_ref() {
-        f if f.is_dir() => f.join(point.file_name().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "point path does not refer to anything",
-            )
-        })?),
-        f => f.to_path_buf(),
-    };
-
-    std::os::unix::fs::symlink(point, filename)
-}
-
-pub fn clear_dir(dir: impl AsRef<Path>) -> io::Result<()> {
-    let dir = dir.as_ref();
-    match fs::symlink_metadata(dir) {
-        Ok(meta) if meta.is_dir() => {
-            fs::remove_dir_all(dir)?;
-            fs::create_dir(dir)
-        }
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "dir is not a dir",
-        )),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir(dir),
-        Err(e) => Err(e),
-    }
-}
-
-pub fn path_as_filename(p: impl AsRef<Path>) -> String {
-    p.as_ref().display().to_string().replace('/', "!")
 }
 
 fn hash_pictures(
