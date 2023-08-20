@@ -20,9 +20,9 @@ impl Hamming {
     pub const MIN_DIST: Distance = 0;
     pub const MAX_DIST: Distance = Hamming::BITS;
 
-    pub fn from_slice(bytes: &[u8]) -> Self {
-        assert_eq!(Hamming::BYTES, bytes.len());
-        let array: [u8; Hamming::BYTES] = bytes
+    pub fn from_hash(hash: image_hasher::ImageHash<[u8; Self::BYTES]>) -> Hamming {
+        let array: [u8; Hamming::BYTES] = hash
+            .as_bytes()
             .try_into()
             .expect("the slice is of the incorrect length");
         Self(Container::from_ne_bytes(array))

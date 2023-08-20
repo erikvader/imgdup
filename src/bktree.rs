@@ -3,33 +3,38 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
 use crate::{
     heap::{self, Heap, HeapBuilder, Ref},
     imghash::hamming::{Distance, Hamming},
 };
 
-type Timestamp = u64; // TODO: replace
+// type Timestamp = u64; // TODO: replace
 
 // TODO: flytta på source och ta in som typparameter i BKNode? Vill helst undvika typer
 // specifika för frameextractor här
-#[derive(serde::Serialize, serde::Deserialize)]
-pub enum Source {
-    Video { frame_pos: Timestamp, path: PathBuf },
-    Picture { path: PathBuf },
-}
+// #[derive(serde::Serialize, serde::Deserialize)]
+// pub enum Source {
+//     Video { frame_pos: Timestamp, path: PathBuf },
+//     Picture { path: PathBuf },
+// }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct BKNode {
+#[derive(Serialize, Deserialize)]
+struct BKNode<S> {
     hash: Hamming,
-    value: Option<Source>,
+    value: Option<S>,
     children: HashMap<Distance, Ref>,
 }
 
-pub struct BKTree {
-    db: Heap<BKNode>,
+pub struct BKTree<S> {
+    db: Heap<BKNode<S>>,
 }
 
-impl BKTree {
+impl<S> BKTree<S>
+where
+    S: Serialize + DeserializeOwned,
+{
     pub fn from_file(file: impl AsRef<Path>) -> heap::Result<Self> {
         let db = HeapBuilder::new().from_file(file)?;
         Ok(Self::new(db))
@@ -39,7 +44,7 @@ impl BKTree {
         Ok(Self::new(Heap::new_in_memory()?))
     }
 
-    fn new(db: Heap<BKNode>) -> Self {
+    fn new(db: Heap<BKNode<S>>) -> Self {
         Self { db }
     }
 
@@ -47,7 +52,7 @@ impl BKTree {
         self.db.close()
     }
 
-    pub fn add(&mut self, hash: Hamming, value: Source) -> heap::Result<()> {
+    pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
         if self.db.root().is_null() {
             let root = self.db.allocate(BKNode::new(hash, value))?;
             self.db.set_root(root);
@@ -84,7 +89,7 @@ impl BKTree {
         mut visit: F,
     ) -> heap::Result<()>
     where
-        F: FnMut(Hamming, &Source),
+        F: FnMut(Hamming, &S),
     {
         if self.db.root().is_null() {
             return Ok(());
@@ -110,16 +115,12 @@ impl BKTree {
         Ok(())
     }
 
-    pub fn remove_any_of<P>(&mut self, these: &HashSet<P>) -> heap::Result<()>
+    pub fn remove_any_of<P>(&mut self, mut predicate: P) -> heap::Result<()>
     where
-        P: std::borrow::Borrow<Path> + Eq + std::hash::Hash,
+        P: FnMut(&S) -> bool,
     {
         self.for_each_internal(
-            |node| {
-                node.value
-                    .as_ref()
-                    .is_some_and(|value| these.contains(value.path()))
-            },
+            |node| node.value.as_ref().is_some_and(|value| predicate(value)),
             |node| node.value = None,
         )?;
         self.db.checkpoint()?;
@@ -128,7 +129,7 @@ impl BKTree {
 
     pub fn for_each<F>(&mut self, mut visit: F) -> heap::Result<()>
     where
-        F: FnMut(Hamming, &Source),
+        F: FnMut(Hamming, &S),
     {
         self.for_each_internal(
             |node| {
@@ -147,8 +148,8 @@ impl BKTree {
         mut modifier: M,
     ) -> heap::Result<()>
     where
-        F: FnMut(&BKNode) -> bool,
-        M: FnMut(&mut BKNode),
+        F: FnMut(&BKNode<S>) -> bool,
+        M: FnMut(&mut BKNode<S>),
     {
         let mut stack = Vec::new();
         if !self.db.root().is_null() {
@@ -170,21 +171,12 @@ impl BKTree {
     }
 }
 
-impl BKNode {
-    fn new(hash: Hamming, value: Source) -> Self {
+impl<S> BKNode<S> {
+    fn new(hash: Hamming, value: S) -> Self {
         Self {
             hash,
             value: Some(value),
             children: HashMap::new(),
-        }
-    }
-}
-
-impl Source {
-    pub fn path(&self) -> &Path {
-        match self {
-            Source::Video { path, .. } => &path,
-            Source::Picture { path } => &path,
         }
     }
 }
@@ -195,24 +187,14 @@ mod test {
 
     use super::*;
 
-    fn value(path: impl Into<PathBuf>) -> Source {
-        Source::Video {
-            frame_pos: 0,
-            path: path.into(),
-        }
+    fn value(path: impl Into<PathBuf>) -> PathBuf {
+        path.into()
     }
 
-    fn contents(tree: &mut BKTree) -> heap::Result<Vec<(Hamming, String)>> {
+    fn contents(tree: &mut BKTree<PathBuf>) -> heap::Result<Vec<(Hamming, String)>> {
         let mut all = Vec::new();
         tree.for_each(|ham, val| {
-            all.push((
-                ham,
-                val.path()
-                    .to_path_buf()
-                    .into_os_string()
-                    .into_string()
-                    .unwrap(),
-            ))
+            all.push((ham, val.clone().into_os_string().into_string().unwrap()))
         })?;
         all.sort();
         Ok(all)
@@ -237,9 +219,7 @@ mod test {
         );
 
         let mut closest = Vec::new();
-        tree.find_within(Hamming(0b101), 0, |_, val| {
-            closest.push(val.path().to_path_buf())
-        })?;
+        tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.clone()))?;
         closest.sort();
         let answer: Vec<PathBuf> = vec!["5_1".into(), "5_2".into()];
         assert_eq!(answer, closest);
@@ -255,7 +235,7 @@ mod test {
         tree.add(Hamming(0b100), value("4"))?;
 
         let rem: HashSet<PathBuf> = HashSet::from(["5_1".into()]);
-        tree.remove_any_of(&rem)?;
+        tree.remove_any_of(|p| rem.contains(p))?;
 
         let all = contents(&mut tree)?;
 
