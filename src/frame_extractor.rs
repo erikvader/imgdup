@@ -23,25 +23,6 @@ use image::RgbImage;
 
 use self::timestamp::Timestamp;
 
-// TODO: remove
-// #[derive(thiserror::Error, Debug)]
-// pub enum FrameExtractorError {
-//     #[error("Timestamp does not seem to originate from the same file")]
-//     TimestampMismatch,
-//     #[error("Cannot initialize ffmpeg")]
-//     FfmpegInitError,
-//     #[error("Failed to open")]
-//     FailedToOpen,
-//     #[error("No video stream")]
-//     NoVideoStream,
-//     #[error("Failed to open codec")]
-//     NoCodec,
-//     #[error("Failed to seek")]
-//     Seek,
-//     #[error("Failed to decode frame")]
-//     Decode,
-// }
-
 pub type Result<T> = eyre::Result<T>;
 
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =

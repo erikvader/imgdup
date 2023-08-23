@@ -63,10 +63,21 @@ where
         .collect()
 }
 
+/// Try to read the file, return None if it doesn't exist
 pub fn read_optional_file(path: impl AsRef<Path>) -> io::Result<Option<String>> {
     match fs::read_to_string(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
         Ok(s) => Ok(Some(s)),
+    }
+}
+
+/// Return true if the path is a directory that is empty
+pub fn is_dir_empty(path: impl AsRef<Path>) -> io::Result<bool> {
+    let path = path.as_ref();
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => Ok(fs::read_dir(path)?.next().is_none()),
+        Ok(_) => Ok(false),
+        Err(e) => Err(e),
     }
 }

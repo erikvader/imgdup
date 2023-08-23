@@ -18,8 +18,8 @@ impl Hasher {
     pub fn new() -> Self {
         Self {
             hasher: image_hasher::HasherConfig::with_bytes_type::<[u8; Hamming::BYTES]>()
-                // DoubleGraident is weird and doesn't caclulate the maximum used bits
-                // correctly. The actual size seems to be: (wh+w+h)/2
+                // NOTE: DoubleGraident is weird and doesn't caclulate the maximum used
+                // bits correctly. The actual size seems to be: (wh+w+h)/2
                 // https://github.com/abonander/img_hash/issues/46
                 // struct NoMaxBits<T>(T); // Use this as a wrapper to ignore max_bits
                 .hash_alg(image_hasher::HashAlg::VertGradient)

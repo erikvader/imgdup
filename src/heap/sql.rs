@@ -168,6 +168,7 @@ impl Sql {
     where
         V: Serialize,
     {
+        // TODO: är inte dessa bara en concat!?
         static PUT_QUERY: OnceLock<String> = OnceLock::new();
         self.put_kv(
             PUT_QUERY.get_or_init(|| put_query(Table::Refs)),

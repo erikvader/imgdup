@@ -10,16 +10,6 @@ use crate::{
     imghash::hamming::{Distance, Hamming},
 };
 
-// type Timestamp = u64; // TODO: replace
-
-// TODO: flytta på source och ta in som typparameter i BKNode? Vill helst undvika typer
-// specifika för frameextractor här
-// #[derive(serde::Serialize, serde::Deserialize)]
-// pub enum Source {
-//     Video { frame_pos: Timestamp, path: PathBuf },
-//     Picture { path: PathBuf },
-// }
-
 #[derive(Serialize, Deserialize)]
 struct BKNode<S> {
     hash: Hamming,
@@ -31,6 +21,8 @@ pub struct BKTree<S> {
     db: Heap<BKNode<S>>,
 }
 
+// TODO: rebuild. Ska det bara en grej i imgdup-edit? Kunna hämta percent dead och annan
+// data vore najs
 impl<S> BKTree<S>
 where
     S: Serialize + DeserializeOwned,
@@ -50,6 +42,11 @@ where
 
     pub fn close(self) -> heap::Result<()> {
         self.db.close()
+    }
+
+    // TODO: räkna antalet levande noder och antalet döda noder
+    pub fn count_nodes(&mut self) -> heap::Result<(usize, usize)> {
+        todo!()
     }
 
     pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
@@ -127,6 +124,9 @@ where
         Ok(())
     }
 
+    // TODO: an iterator iterface would probably be nicer. It could maybe yield instances
+    // of some struct that has a getter, setter and remover to only make the BKNode dirty
+    // when necessary.
     pub fn for_each<F>(&mut self, mut visit: F) -> heap::Result<()>
     where
         F: FnMut(Hamming, &S),
