@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use clap::Parser;
@@ -66,8 +66,10 @@ fn init_logger_and_eyre() -> eyre::Result<()> {
     use color_eyre::config::{HookBuilder, Theme};
     use simplelog::*;
 
-    // TODO: always print thread number
     let mut builder = ConfigBuilder::new();
+    builder.set_thread_level(LevelFilter::Error);
+    builder.set_target_level(LevelFilter::Error);
+
     // TODO: needed?
     // builder.add_filter_allow_str("imgdup");
 
@@ -274,13 +276,22 @@ fn get_hashes(
     // TODO: move to `config`
     let min_frames: NonZeroU32 = NonZeroU32::new(5).unwrap();
     let max_step: Duration = Duration::from_secs(10);
+    let log_every = Duration::from_secs(10);
+
     let step = calc_step(approx_len, min_frames, max_step);
     log::debug!("Stepping with {}s", step.as_secs_f64());
 
     let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
+    let approx_len = Timestamp::duration_to_string(approx_len);
 
+    let mut last_logged = Instant::now();
     while let Some((ts, frame)) = extractor.next().wrap_err("Failed to get a frame")? {
-        // log::debug!("At timestamp: {}/{}", ts.to_string(), approx_len.as_secs());
+        let now = Instant::now();
+        if now - last_logged >= log_every {
+            last_logged = now;
+            log::debug!("At timestamp: {}/{}", ts.to_string(), approx_len);
+        }
+
         // TODO: check for blacklisted images. Before or after border removal?
         let frame = imgutils::remove_borders(&frame, &config.border_conf);
         if imgutils::is_subimg_empty(&frame) {
@@ -301,6 +312,7 @@ fn get_hashes(
         extractor.seek_forward(step).wrap_err("Failed to seek")?;
     }
 
+    log::info!("Got {} hashes from: {}", hashes.len(), video.display());
     Ok(hashes)
 }
 

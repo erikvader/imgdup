@@ -1,0 +1,4 @@
+--dup-dir _DUPS_
+--src-dirs _BUFFER_
+--database-file imgdup.db
+--video-threads 1

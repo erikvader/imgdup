@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ffmpeg::Rational;
 
 extern crate ffmpeg_next as ffmpeg;
@@ -48,6 +50,17 @@ impl Timestamp {
             "{}{:02}:{:02}:{:02}.{:03}",
             negative, hours, minutes, seconds, subsec
         )
+    }
+
+    pub fn duration_to_string(dur: Duration) -> String {
+        Timestamp::new(
+            dur.as_millis()
+                .try_into()
+                .expect("is probably not that big"),
+            Rational::new(1, 1000),
+            0,
+        )
+        .to_string()
     }
 }
 
