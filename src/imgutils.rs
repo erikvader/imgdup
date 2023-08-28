@@ -12,8 +12,8 @@ pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.03;
 
 #[derive(Copy, Clone)]
 pub struct RemoveBordersConf {
-    pub maskify_threshold: u8,
-    pub maximum_whites: f64,
+    maskify_threshold: u8,
+    maximum_whites: f64,
 }
 
 impl Default for RemoveBordersConf {
@@ -26,12 +26,12 @@ impl Default for RemoveBordersConf {
 }
 
 impl RemoveBordersConf {
-    pub fn with_maskify_threshold(mut self, threshold: u8) -> Self {
+    pub fn maskify_threshold(mut self, threshold: u8) -> Self {
         self.maskify_threshold = threshold;
         self
     }
 
-    pub fn with_maximum_whites(mut self, max: f64) -> Self {
+    pub fn maximum_whites(mut self, max: f64) -> Self {
         self.maximum_whites = max;
         self
     }
@@ -149,11 +149,11 @@ pub fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
     }
 }
 
-pub fn subimg_empty<T: GenericImageView>(img: &SubImage<&T>) -> bool {
-    img_empty(&**img)
+pub fn is_subimg_empty<T: GenericImageView>(img: &SubImage<&T>) -> bool {
+    is_img_empty(&**img)
 }
 
-pub fn img_empty<T>(img: &T) -> bool
+pub fn is_img_empty<T>(img: &T) -> bool
 where
     T: GenericImageView,
 {
@@ -184,8 +184,8 @@ mod test {
         );
 
         let cropped = remove_borders(&black, &RemoveBordersConf::default());
-        assert!(img_empty(&*cropped));
-        assert!(subimg_empty(&cropped));
+        assert!(is_img_empty(&*cropped));
+        assert!(is_subimg_empty(&cropped));
     }
 
     #[test]
@@ -206,7 +206,7 @@ mod test {
     #[test]
     fn bbox_empty() {
         let img = construct_gray(&[]);
-        assert!(img_empty(&img));
+        assert!(is_img_empty(&img));
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {

@@ -104,7 +104,7 @@ fn test_write_to_file() -> Result<()> {
 
 #[test]
 fn test_linked_list_add() -> Result<()> {
-    let mut db = HeapBuilder::new().with_maximum_block_size(1).in_memory()?;
+    let mut db = HeapBuilder::new().maximum_block_size(1).in_memory()?;
     let mut list = List::new();
 
     let mut reference = Vec::new();
@@ -121,7 +121,7 @@ fn test_linked_list_add() -> Result<()> {
 
 #[test]
 fn test_linked_list_remove() -> Result<()> {
-    let mut db = HeapBuilder::new().with_maximum_block_size(1).in_memory()?;
+    let mut db = HeapBuilder::new().maximum_block_size(1).in_memory()?;
     let mut list = List::new();
 
     list.add(&mut db, 1)?;
@@ -138,9 +138,9 @@ fn test_linked_list_remove() -> Result<()> {
 fn test_linked_list_stress_no_blocks() -> Result<()> {
     let tmp_path = tmp_path();
     let mut db: Heap<Node> = HeapBuilder::new()
-        .with_cache_capacity(20)
-        .with_dirtyness_limit(5)
-        .with_maximum_block_size(1)
+        .cache_capacity(20)
+        .dirtyness_limit(5)
+        .maximum_block_size(1)
         .from_file(&tmp_path)?;
 
     let (list, reference) = list_stress(&mut db)?;
@@ -162,9 +162,9 @@ fn test_linked_list_stress_no_blocks() -> Result<()> {
 fn test_linked_list_stress() -> Result<()> {
     let tmp_path = tmp_path();
     let mut db: Heap<Node> = HeapBuilder::new()
-        .with_cache_capacity(20)
-        .with_dirtyness_limit(5)
-        .with_maximum_block_size(10)
+        .cache_capacity(20)
+        .dirtyness_limit(5)
+        .maximum_block_size(10)
         .from_file(&tmp_path)?;
 
     let (list, reference) = list_stress(&mut db)?;

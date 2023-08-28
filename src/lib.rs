@@ -7,3 +7,4 @@ pub mod imgutils;
 pub mod log;
 pub mod perf;
 pub mod plot;
+pub mod work_queue;

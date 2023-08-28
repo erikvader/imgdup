@@ -17,12 +17,13 @@ use ffmpeg::frame::Video as FrameVideo;
 use ffmpeg::media::Type;
 use ffmpeg::software::scaling::context::Context as ScalingContext;
 use ffmpeg::util::log as ffmpeglog;
-use ffmpeg::{Dictionary, Packet as CodecPacket, Rational, Rescale};
+use ffmpeg::{threading, Dictionary, Packet as CodecPacket, Rational, Rescale};
 use ffmpeg_sys_next::{AV_NOPTS_VALUE, AV_TIME_BASE_Q};
 use image::RgbImage;
 
 use self::timestamp::Timestamp;
 
+// TODO: a dedicated error type should probably be used here?
 pub type Result<T> = eyre::Result<T>;
 
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =

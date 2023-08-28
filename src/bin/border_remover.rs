@@ -48,8 +48,8 @@ fn main() -> eyre::Result<()> {
         let cropped = imgutils::remove_borders(
             &input,
             &RemoveBordersConf::default()
-                .with_maskify_threshold(cli.maskify_threshold)
-                .with_maximum_whites(cli.maximum_whites),
+                .maskify_threshold(cli.maskify_threshold)
+                .maximum_whites(cli.maximum_whites),
         );
         println!("cropped: {:?}", cropped.bounds());
         cropped.to_image().into()

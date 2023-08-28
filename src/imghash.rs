@@ -38,6 +38,7 @@ impl Hasher {
     }
 }
 
+// TODO: accept subimages
 pub fn hash<I>(img: &I) -> Hamming
 where
     I: image_hasher::Image,

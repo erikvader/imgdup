@@ -78,6 +78,7 @@ pub fn is_dir_empty(path: impl AsRef<Path>) -> io::Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => Ok(fs::read_dir(path)?.next().is_none()),
         Ok(_) => Ok(false),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
     }
 }

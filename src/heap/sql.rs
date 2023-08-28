@@ -73,6 +73,7 @@ impl Sql {
             // file (locking_mode=EXCLUSIVE) and no fsync on the wal-file
             // (synchronous=NORMAL). The writes will only be fsynced into the database
             // when the wal gets too big or when the connection is closed.
+            // TODO: -shm files are created, even though they shouldn't
             "PRAGMA synchronous=NORMAL;
              PRAGMA locking_mode=EXCLUSIVE;
              PRAGMA journal_mode=WAL;

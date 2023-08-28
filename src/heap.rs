@@ -76,19 +76,19 @@ impl HeapBuilder {
         }
     }
 
-    pub fn with_cache_capacity(mut self, cache_capacity: usize) -> Self {
+    pub fn cache_capacity(mut self, cache_capacity: usize) -> Self {
         assert!(cache_capacity >= 1);
         self.config.cache_capacity = cache_capacity;
         self
     }
 
-    pub fn with_dirtyness_limit(mut self, dirtyness_limit: usize) -> Self {
+    pub fn dirtyness_limit(mut self, dirtyness_limit: usize) -> Self {
         assert!(dirtyness_limit >= 1);
         self.config.dirtyness_limit = dirtyness_limit;
         self
     }
 
-    pub fn with_maximum_block_size(mut self, maximum_block_size: usize) -> Self {
+    pub fn maximum_block_size(mut self, maximum_block_size: usize) -> Self {
         assert!(maximum_block_size >= 1);
         self.config.maximum_block_size = maximum_block_size;
         self
@@ -452,7 +452,7 @@ mod test {
     #[test]
     fn test_insert_blocks() -> Result<()> {
         let mut db = HeapBuilder::new()
-            .with_maximum_block_size(2)
+            .maximum_block_size(2)
             .in_memory::<i32>()?;
 
         let first = db.allocate(1)?;
@@ -476,7 +476,7 @@ mod test {
     #[test]
     fn test_remove() -> Result<()> {
         let mut db = HeapBuilder::new()
-            .with_maximum_block_size(2)
+            .maximum_block_size(2)
             .in_memory::<i32>()?;
 
         let r1 = db.allocate(3)?;

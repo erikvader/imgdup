@@ -49,8 +49,8 @@ fn main() -> eyre::Result<()> {
     let hashes = hash_pictures(
         &pictures,
         RemoveBordersConf::default()
-            .with_maskify_threshold(cli.maskify_threshold)
-            .with_maximum_whites(cli.maximum_whites),
+            .maskify_threshold(cli.maskify_threshold)
+            .maximum_whites(cli.maximum_whites),
     )?;
 
     assert_eq!(hashes.len(), pictures.len());
@@ -88,7 +88,7 @@ fn hash_pictures(
         let img = image::open(pic_path)?.to_rgb8();
         let cropped = imgutils::remove_borders(&img, &config).to_image();
 
-        let h = if imgutils::img_empty(&cropped) {
+        let h = if imgutils::is_img_empty(&cropped) {
             println!("Empty: {pic_path:?}");
             writeln!(&mut file, "{:?}", pic_path.display())?;
             symlink(pic_path, empty_dir).ok();
