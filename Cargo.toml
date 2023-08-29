@@ -26,6 +26,7 @@ libc = "0.2"
 image = "0.24"
 image_hasher = "=1.2.0"
 base64 = "0.21"
+const_format = "0.2"
 
 # For CLI flags
 clap = { version = "4.3", features = ["derive"] }

@@ -1,9 +1,10 @@
-use std::{io::Write, path::Path, sync::OnceLock};
+use std::{io::Write, path::Path};
 
 // TODO: https://github.com/meilisearch/heed ??
 // TODO: https://github.com/seladb/pickledb-rs ??
 
 use super::Result;
+use const_format::concatcp;
 use rusqlite::{blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql};
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -26,26 +27,35 @@ impl Table {
     }
 }
 
-fn put_query(table: Table) -> String {
-    format!(
-        "INSERT INTO {}(key, value)
-         VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value
-         RETURNING rowid",
-        table.str()
-    )
+macro_rules! put_query {
+    ($tab:expr) => {
+        concatcp!(
+            "INSERT INTO ",
+            $tab,
+            "(key, value)
+             VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value
+             RETURNING rowid",
+        )
+    };
 }
 
-fn get_query(table: Table) -> String {
-    format!("SELECT rowid FROM {} WHERE key=?1", table.str())
+macro_rules! get_query {
+    ($tab:expr) => {
+        concatcp!("SELECT rowid FROM ", $tab, " WHERE key=?1")
+    };
 }
 
-fn remove_query(table: Table) -> String {
-    format!("DELETE FROM {} WHERE key=?1", table.str())
+macro_rules! remove_query {
+    ($tab:expr) => {
+        concatcp!("DELETE FROM ", $tab, " WHERE key=?1")
+    };
 }
 
-fn count_query(table: Table) -> String {
-    format!("SELECT COUNT(*) FROM {}", table.str())
+macro_rules! count_query {
+    ($tab:expr) => {
+        concatcp!("SELECT COUNT(*) FROM ", $tab)
+    };
 }
 
 impl Sql {
@@ -138,70 +148,42 @@ impl Sql {
     where
         V: Serialize,
     {
-        static PUT_QUERY: OnceLock<String> = OnceLock::new();
-        self.put_kv(
-            PUT_QUERY.get_or_init(|| put_query(Table::Meta)),
-            Table::Meta,
-            key,
-            value,
-        )
+        self.put_kv(put_query!(Table::Meta.str()), Table::Meta, key, value)
     }
 
     pub(super) fn get_meta<V>(&self, key: &str) -> Result<Option<V>>
     where
         V: DeserializeOwned,
     {
-        static GET_QUERY: OnceLock<String> = OnceLock::new();
-        self.get_kv(
-            GET_QUERY.get_or_init(|| get_query(Table::Meta)),
-            Table::Meta,
-            key,
-        )
+        self.get_kv(get_query!(Table::Meta.str()), Table::Meta, key)
     }
 
     pub(super) fn remove_meta(&self, key: &str) -> Result<bool> {
-        static REMOVE_QUERY: OnceLock<String> = OnceLock::new();
-        self.remove_kv(REMOVE_QUERY.get_or_init(|| remove_query(Table::Meta)), key)
+        self.remove_kv(remove_query!(Table::Meta.str()), key)
     }
 
     pub(super) fn put_refs<V>(&self, key: i64, value: V) -> Result<()>
     where
         V: Serialize,
     {
-        // TODO: är inte dessa bara en concat!?
-        static PUT_QUERY: OnceLock<String> = OnceLock::new();
-        self.put_kv(
-            PUT_QUERY.get_or_init(|| put_query(Table::Refs)),
-            Table::Refs,
-            key,
-            value,
-        )
+        self.put_kv(put_query!(Table::Refs.str()), Table::Refs, key, value)
     }
 
     pub(super) fn get_refs<V>(&self, key: i64) -> Result<Option<V>>
     where
         V: DeserializeOwned,
     {
-        static GET_QUERY: OnceLock<String> = OnceLock::new();
-        self.get_kv(
-            GET_QUERY.get_or_init(|| get_query(Table::Refs)),
-            Table::Refs,
-            key,
-        )
+        self.get_kv(get_query!(Table::Refs.str()), Table::Refs, key)
     }
 
     pub(super) fn remove_refs(&self, key: i64) -> Result<bool> {
-        static REMOVE_QUERY: OnceLock<String> = OnceLock::new();
-        self.remove_kv(REMOVE_QUERY.get_or_init(|| remove_query(Table::Refs)), key)
+        self.remove_kv(remove_query!(Table::Refs.str()), key)
     }
 
     pub(super) fn count_refs(&self) -> Result<usize> {
-        static COUNT_QUERY: OnceLock<String> = OnceLock::new();
-        let count = self.db.query_row(
-            COUNT_QUERY.get_or_init(|| count_query(Table::Refs)),
-            (),
-            |row| row.get(0),
-        )?;
+        let count = self
+            .db
+            .query_row(count_query!(Table::Refs.str()), (), |row| row.get(0))?;
         Ok(count)
     }
 
