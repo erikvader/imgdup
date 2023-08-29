@@ -297,7 +297,7 @@ fn get_hashes(
         if imgutils::is_subimg_empty(&frame) {
             // TODO: save the original somewhere for later potential debugging
         } else {
-            let hash = imghash::hash(&frame.to_image());
+            let hash = imghash::hash_sub(&frame);
             let pushit = match hashes.last() {
                 Some((_, last_hash)) => {
                     hash.distance_to(*last_hash) > config.similarity_threshold

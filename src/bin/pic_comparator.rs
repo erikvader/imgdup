@@ -86,15 +86,15 @@ fn hash_pictures(
     for (i, pic_path) in pictures.iter().enumerate() {
         println!("Hash: {}/{}", i + 1, total);
         let img = image::open(pic_path)?.to_rgb8();
-        let cropped = imgutils::remove_borders(&img, &config).to_image();
+        let cropped = imgutils::remove_borders(&img, &config);
 
-        let h = if imgutils::is_img_empty(&cropped) {
+        let h = if imgutils::is_subimg_empty(&cropped) {
             println!("Empty: {pic_path:?}");
             writeln!(&mut file, "{:?}", pic_path.display())?;
             symlink(pic_path, empty_dir).ok();
             None
         } else {
-            Some(imghash::hash(&cropped))
+            Some(imghash::hash_sub(&cropped))
         };
 
         hashes.push(h);

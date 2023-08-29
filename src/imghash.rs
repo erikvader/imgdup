@@ -1,4 +1,6 @@
-use std::{cell::OnceCell, path::Path};
+use std::{path::Path, sync::OnceLock};
+
+use image::{RgbImage, SubImage};
 
 use self::hamming::{Distance, Hamming};
 
@@ -6,9 +8,7 @@ pub mod hamming;
 
 pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 32;
 
-thread_local! {
-    static HASHER: OnceCell<Hasher> = OnceCell::new();
-}
+static HASHER: OnceLock<Hasher> = OnceLock::new();
 
 pub struct Hasher {
     hasher: image_hasher::Hasher<[u8; Hamming::BYTES]>,
@@ -38,12 +38,16 @@ impl Hasher {
     }
 }
 
-// TODO: accept subimages
 pub fn hash<I>(img: &I) -> Hamming
 where
     I: image_hasher::Image,
 {
-    HASHER.with(|h| h.get_or_init(|| Hasher::new()).hash(img))
+    HASHER.get_or_init(|| Hasher::new()).hash(img)
+}
+
+pub fn hash_sub(img: &SubImage<&RgbImage>) -> Hamming {
+    // TODO: do this without copying the whole image
+    hash(&img.to_image())
 }
 
 pub fn hash_from_path(path: &Path) -> image::ImageResult<Hamming> {
