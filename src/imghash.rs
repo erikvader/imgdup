@@ -1,6 +1,6 @@
-use std::{path::Path, sync::OnceLock};
+use std::{ops::Deref, path::Path, sync::OnceLock};
 
-use image::{RgbImage, SubImage};
+use image::{GenericImageView, Pixel, RgbImage, SubImage};
 
 use self::hamming::{Distance, Hamming};
 
@@ -21,7 +21,7 @@ impl Hasher {
                 // NOTE: DoubleGraident is weird and doesn't caclulate the maximum used
                 // bits correctly. The actual size seems to be: (wh+w+h)/2
                 // https://github.com/abonander/img_hash/issues/46
-                // struct NoMaxBits<T>(T); // Use this as a wrapper to ignore max_bits
+                // struct NoMaxBits<T>(T); // Use some wrapper to ignore max_bits
                 .hash_alg(image_hasher::HashAlg::VertGradient)
                 .hash_size(16, 8)
                 .preproc_dct()
@@ -45,19 +45,22 @@ where
     HASHER.get_or_init(|| Hasher::new()).hash(img)
 }
 
-pub fn hash_sub(img: &SubImage<&RgbImage>) -> Hamming {
-    // TODO: do this without copying the whole image
-    hash(&img.to_image())
-}
-
-pub fn hash_from_path(path: &Path) -> image::ImageResult<Hamming> {
-    let img = image::open(path)?;
-    Ok(hash(&img))
+pub fn hash_sub<I, P>(img: &SubImage<&I>) -> Hamming
+where
+    I: image_hasher::Image + GenericImageView<Pixel = P>,
+    P: Pixel<Subpixel = u8> + 'static,
+{
+    if img.bounds() == img.inner().bounds() {
+        hash(img.inner())
+    } else {
+        // TODO: do this without copying the whole image
+        hash(&img.to_image())
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::imgutils::filled;
+    use crate::imgutils::{construct_gray, filled, BLACK, WHITE};
 
     use super::*;
 
@@ -80,5 +83,23 @@ mod test {
         let hash = Hasher::new().hash(&filled(0, 0, 0, 0, 0));
         println!("empty: {hash}");
         assert!(true);
+    }
+
+    #[test]
+    fn sub() {
+        let img = construct_gray(&[
+            &[BLACK, WHITE, BLACK, WHITE],
+            &[WHITE, BLACK, WHITE, BLACK],
+            &[BLACK, WHITE, BLACK, WHITE],
+            &[WHITE, BLACK, WHITE, BLACK],
+        ]);
+        let sub = img.view(1, 1, 2, 2);
+        let whole = img.view(0, 0, img.width(), img.height());
+
+        assert_eq!(img.bounds(), sub.inner().bounds());
+        assert_ne!(img.bounds(), sub.bounds());
+
+        assert_eq!(hash(&img), hash_sub(&whole));
+        assert_ne!(hash(&img), hash_sub(&sub));
     }
 }

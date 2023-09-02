@@ -19,6 +19,7 @@ use imgdup::{
         hamming::{Distance, Hamming},
     },
     imgutils::{self, RemoveBordersConf},
+    repo::Repo,
     work_queue::WorkQueue,
 };
 
@@ -62,6 +63,7 @@ struct Cli {
     database_file: PathBuf,
 }
 
+// TODO: make this shared so all binaries can use it
 fn init_logger_and_eyre() -> eyre::Result<()> {
     use color_eyre::config::{HookBuilder, Theme};
     use simplelog::*;
@@ -134,10 +136,6 @@ fn main() -> eyre::Result<()> {
     init_logger_and_eyre()?;
     let cli = cli_arguments()?;
 
-    if !is_dir_empty(cli.dup_dir)? {
-        eyre::bail!("Dup dir is not empty, or doesn't exist");
-    }
-
     let mut tree =
         BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
             format!(
@@ -181,7 +179,9 @@ fn main() -> eyre::Result<()> {
                 .maximum_whites(cli.maximum_whites),
         );
 
+    log::info!("Processing {} new files", new_files.len());
     let work_queue = WorkQueue::new(new_files);
+    let repo = Repo::new(cli.dup_dir).wrap_err("failed to create the repo")?;
 
     thread::scope(|s| {
         let handles = {
@@ -194,7 +194,8 @@ fn main() -> eyre::Result<()> {
                 handles.push((format!("video_{i}"), video_thread));
             }
 
-            let tree_thread = s.spawn(|| tree_worker(rx, tree));
+            let tree_thread =
+                s.spawn(|| tree_worker(rx, tree, repo, cli.similarity_threshold));
             handles.push(("tree".to_string(), tree_thread));
 
             handles
@@ -214,8 +215,8 @@ fn main() -> eyre::Result<()> {
 
 #[derive(Debug)]
 struct Payload<'env> {
-    path: &'env Path,
-    hashes: eyre::Result<Vec<(Timestamp, Hamming)>>,
+    video_path: &'env Path,
+    hashes: Vec<(Timestamp, Hamming)>,
 }
 
 struct VideoWorkerConf {
@@ -248,16 +249,25 @@ fn video_worker<'env>(
     tx: mpsc::SyncSender<Payload<'env>>,
     videos: &WorkQueue<&'env Path>,
     config: &VideoWorkerConf,
+    // TODO: repo for trash dir
+    // TODO: slice, or something, of hashes, or something, to ignore
 ) -> eyre::Result<()> {
     log::debug!("Video worker at your service");
     while let Some(video) = videos.next() {
-        let load = Payload {
-            path: video,
-            hashes: get_hashes(video, config),
-        };
+        match get_hashes(video, config) {
+            Err(e) => {
+                log::error!("Failed to get hashes from '{}': {:?}", video.display(), e)
+            }
+            Ok(hashes) => {
+                let load = Payload {
+                    video_path: video,
+                    hashes,
+                };
 
-        if let Err(_) = tx.send(load) {
-            eyre::bail!("The receiver is down");
+                if let Err(_) = tx.send(load) {
+                    eyre::bail!("The receiver is down");
+                }
+            }
         }
     }
     log::debug!("Video worker done");
@@ -331,11 +341,91 @@ fn estimated_num_of_frames(video_length: Duration, step: Duration) -> usize {
 fn tree_worker(
     rx: mpsc::Receiver<Payload>,
     mut tree: BKTree<VidSrc>,
+    mut repo: Repo,
+    similarity_threshold: Distance,
 ) -> eyre::Result<()> {
     log::debug!("Tree worker working");
-    while let Ok(payload) = rx.recv() {
-        // dbg!(payload);
+
+    while let Ok(Payload { video_path, hashes }) = rx.recv() {
+        log::info!("Saving: {}", video_path.display());
+
+        let similar_videos = find_similar_videos(
+            hashes.iter().map(|(_, hash)| *hash),
+            &mut tree,
+            similarity_threshold,
+        )
+        .wrap_err("failed to find similar videos")?;
+
+        if !similar_videos.is_empty() {
+            log::info!("'{}' has dups", video_path.display());
+            link_dup(&mut repo, video_path, similar_videos)
+                .wrap_err("failed to link dup")?;
+        }
+
+        save_video(hashes, &mut tree, video_path)
+            .wrap_err("failed to save some video hashes to the tree")?;
+
+        log::info!("Done saving '{}'", video_path.display());
     }
+
     log::debug!("Tree worker not working");
     Ok(())
+}
+
+fn save_video(
+    hashes: Vec<(Timestamp, Hamming)>,
+    tree: &mut BKTree<VidSrc>,
+    video_path: &Path,
+) -> eyre::Result<()> {
+    for (ts, hash) in hashes {
+        tree.add(
+            hash,
+            VidSrc {
+                frame_pos: ts,
+                path: video_path.to_owned(),
+            },
+        )
+        .wrap_err("failed to add to the tree")?;
+    }
+
+    Ok(())
+}
+
+fn link_dup(
+    repo: &mut Repo,
+    video_path: &Path,
+    similar_videos: HashSet<PathBuf>,
+) -> eyre::Result<()> {
+    let entry = repo
+        .new_entry()
+        .wrap_err("failed to create repo entry for a new dup")?;
+
+    entry
+        .create_link("0_the_new_one", video_path)
+        .wrap_err("failed to link the new one")?;
+
+    for (i, similar) in similar_videos.into_iter().enumerate() {
+        let link_name = format!("1_dup_{i}");
+
+        entry
+            .create_link(link_name, similar)
+            .wrap_err("failed to link a dup")?;
+    }
+
+    Ok(())
+}
+
+fn find_similar_videos(
+    hashes: impl IntoIterator<Item = Hamming>,
+    tree: &mut BKTree<VidSrc>,
+    similarity_threshold: Distance,
+) -> eyre::Result<HashSet<PathBuf>> {
+    let mut similar_videos = HashSet::new();
+    for hash in hashes {
+        tree.find_within(hash, similarity_threshold, |_, src| {
+            similar_videos.insert(src.path.clone());
+        })
+        .wrap_err("failed to find_within")?;
+    }
+    Ok(similar_videos)
 }

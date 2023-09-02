@@ -79,6 +79,7 @@ where
         Ok(())
     }
 
+    // TODO: iterator interface would be nicer
     pub fn find_within<F>(
         &mut self,
         hash: Hamming,
