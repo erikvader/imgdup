@@ -50,6 +50,23 @@ where
     }
 
     pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
+        self.add_internal(hash, value)?;
+        self.db.checkpoint()?;
+        Ok(())
+    }
+
+    pub fn add_all(
+        &mut self,
+        items: impl IntoIterator<Item = (Hamming, S)>,
+    ) -> heap::Result<()> {
+        for (hash, value) in items {
+            self.add_internal(hash, value)?;
+        }
+        self.db.checkpoint()?;
+        Ok(())
+    }
+
+    fn add_internal(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
         if self.db.root().is_null() {
             let root = self.db.allocate(BKNode::new(hash, value))?;
             self.db.set_root(root);
@@ -75,7 +92,6 @@ where
             }
         }
 
-        self.db.checkpoint()?;
         Ok(())
     }
 

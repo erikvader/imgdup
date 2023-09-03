@@ -240,6 +240,7 @@ fn remove_first(vec: &mut Vec<i32>, remove: i32) {
     }
 }
 
+// TODO: figure out how to share this with other integration tests
 fn tmp_path() -> TempPath {
     match option_env!("CARGO_TARGET_TMPDIR") {
         None => NamedTempFile::new(),

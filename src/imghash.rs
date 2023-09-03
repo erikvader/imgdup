@@ -82,7 +82,11 @@ mod test {
     fn empty() {
         let hash = Hasher::new().hash(&filled(0, 0, 0, 0, 0));
         println!("empty: {hash}");
-        assert!(true);
+
+        let gray = filled(5, 5, 128, 128, 128);
+        let sub_hash = hash_sub(&gray.view(0, 0, 0, 0));
+
+        assert_eq!(hash, sub_hash);
     }
 
     #[test]

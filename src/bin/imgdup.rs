@@ -1,4 +1,5 @@
 use std::{
+    cmp,
     collections::HashSet,
     ffi::OsString,
     num::NonZeroU32,
@@ -10,10 +11,11 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
+use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
-    fsutils::{all_files, is_dir_empty, read_optional_file},
+    fsutils::{all_files, read_optional_file},
     imghash::{
         self,
         hamming::{Distance, Hamming},
@@ -46,9 +48,9 @@ struct Cli {
     #[arg(long, short = 'i')]
     ignore_dir: Option<PathBuf>,
 
-    /// Folder to place filtered out pictures
-    #[arg(long, short = 't')]
-    trash_dir: Option<PathBuf>,
+    /// Folder to place filtered out pictures and other debug info
+    #[arg(long, short = 'g')]
+    graveyard_dir: Option<PathBuf>,
 
     /// Where to place the results
     #[arg(long, short = 'd')]
@@ -70,7 +72,13 @@ fn init_logger_and_eyre() -> eyre::Result<()> {
 
     let mut builder = ConfigBuilder::new();
     builder.set_thread_level(LevelFilter::Error);
-    builder.set_target_level(LevelFilter::Error);
+    builder.set_target_level(LevelFilter::Off);
+    builder.set_location_level(LevelFilter::Trace);
+
+    builder.set_level_padding(LevelPadding::Right);
+    builder.set_thread_padding(ThreadPadding::Right(4));
+
+    builder.set_thread_mode(ThreadLogMode::Both);
 
     // TODO: needed?
     // builder.add_filter_allow_str("imgdup");
@@ -179,6 +187,14 @@ fn main() -> eyre::Result<()> {
                 .maximum_whites(cli.maximum_whites),
         );
 
+    let ignored_hashes = if let Some(ignore_dir) = cli.ignore_dir {
+        log::info!("Reading images to ignore from: {}", ignore_dir.display());
+        read_ignored(ignore_dir, &video_conf)?
+    } else {
+        vec![]
+    };
+    log::info!("Ignoring {} images", ignored_hashes.len());
+
     log::info!("Processing {} new files", new_files.len());
     let work_queue = WorkQueue::new(new_files);
     let repo = Repo::new(cli.dup_dir).wrap_err("failed to create the repo")?;
@@ -188,14 +204,21 @@ fn main() -> eyre::Result<()> {
             let mut handles = vec![];
             let (tx, rx) = mpsc::sync_channel::<Payload>(16);
 
-            for i in 0..cli.video_threads.get() {
+            for i in 0..cmp::min(work_queue.len(), cli.video_threads.get() as usize) {
                 let tx = tx.clone();
-                let video_thread = s.spawn(|| video_worker(tx, &work_queue, &video_conf));
+                let video_thread = thread::Builder::new()
+                    .name(format!("V{i:03}"))
+                    .spawn_scoped(s, || {
+                        video_worker(tx, &work_queue, &video_conf, &ignored_hashes)
+                    })
+                    .expect("failed to spawn thread");
                 handles.push((format!("video_{i}"), video_thread));
             }
 
-            let tree_thread =
-                s.spawn(|| tree_worker(rx, tree, repo, cli.similarity_threshold));
+            let tree_thread = thread::Builder::new()
+                .name(format!("Tree"))
+                .spawn_scoped(s, || tree_worker(rx, tree, repo, cli.similarity_threshold))
+                .expect("failed to spawn thread");
             handles.push(("tree".to_string(), tree_thread));
 
             handles
@@ -250,11 +273,13 @@ fn video_worker<'env>(
     videos: &WorkQueue<&'env Path>,
     config: &VideoWorkerConf,
     // TODO: repo for trash dir
-    // TODO: slice, or something, of hashes, or something, to ignore
+    ignored_hashes: &[Hamming],
 ) -> eyre::Result<()> {
     log::debug!("Video worker at your service");
-    while let Some(video) = videos.next() {
-        match get_hashes(video, config) {
+    while let Some((i, video)) = videos.next_index() {
+        log::info!("Progress: {}/{} videos", i + 1, videos.len());
+
+        match get_hashes(video, ignored_hashes, config) {
             Err(e) => {
                 log::error!("Failed to get hashes from '{}': {:?}", video.display(), e)
             }
@@ -276,6 +301,7 @@ fn video_worker<'env>(
 
 fn get_hashes(
     video: &Path,
+    ignored_hashes: &[Hamming],
     config: &VideoWorkerConf,
 ) -> eyre::Result<Vec<(Timestamp, Hamming)>> {
     log::info!("Retrieving hashes for: {}", video.display());
@@ -302,21 +328,13 @@ fn get_hashes(
             log::debug!("At timestamp: {}/{}", ts.to_string(), approx_len);
         }
 
-        // TODO: check for blacklisted images. Before or after border removal?
-        let frame = imgutils::remove_borders(&frame, &config.border_conf);
-        if imgutils::is_subimg_empty(&frame) {
-            // TODO: save the original somewhere for later potential debugging
-        } else {
-            let hash = imghash::hash_sub(&frame);
-            let pushit = match hashes.last() {
-                Some((_, last_hash)) => {
-                    hash.distance_to(*last_hash) > config.similarity_threshold
-                }
-                None => true,
-            };
-            if pushit {
-                hashes.push((ts, hash));
-            }
+        if let Some(hash) = frame_to_hash(
+            frame,
+            ignored_hashes,
+            config,
+            hashes.last().map(|(_, h)| *h),
+        ) {
+            hashes.push((ts, hash));
         }
 
         extractor.seek_forward(step).wrap_err("Failed to seek")?;
@@ -324,6 +342,38 @@ fn get_hashes(
 
     log::info!("Got {} hashes from: {}", hashes.len(), video.display());
     Ok(hashes)
+}
+
+fn frame_to_hash(
+    frame: RgbImage,
+    ignored_hashes: &[Hamming],
+    config: &VideoWorkerConf,
+    last_hash: Option<Hamming>,
+) -> Option<Hamming> {
+    let frame = imgutils::remove_borders(&frame, &config.border_conf);
+
+    if imgutils::is_subimg_empty(&frame) {
+        // TODO: save the original somewhere for later potential debugging
+        return None;
+    }
+
+    let hash = imghash::hash_sub(&frame);
+
+    if ignored_hashes
+        .iter()
+        .any(|ignore| ignore.distance_to(hash) <= config.similarity_threshold)
+    {
+        // TODO: save for debuggin
+        return None;
+    }
+
+    match last_hash {
+        Some(last_hash) if hash.distance_to(last_hash) > config.similarity_threshold => {
+            Some(hash)
+        }
+        None => Some(hash),
+        _ => None,
+    }
 }
 
 fn calc_step(
@@ -338,6 +388,52 @@ fn estimated_num_of_frames(video_length: Duration, step: Duration) -> usize {
     (video_length.as_secs_f64() / step.as_secs_f64()).ceil() as usize
 }
 
+fn read_ignored(
+    dir: impl AsRef<Path>,
+    conf: &VideoWorkerConf,
+) -> eyre::Result<Vec<Hamming>> {
+    let all_files: Vec<_> = all_files([dir]).wrap_err("failed to read dir")?;
+    let mut hashes = Vec::with_capacity(all_files.len());
+    let mut hashes_path = Vec::with_capacity(all_files.len());
+
+    for file in all_files.iter() {
+        let img = image::open(&file)
+            .wrap_err_with(|| format!("could not open {} as an image", file.display()))?
+            .to_rgb8();
+
+        let img = imgutils::remove_borders(&img, &conf.border_conf);
+        if imgutils::is_subimg_empty(&img) {
+            log::warn!(
+                "The ignored file '{}' is empty after border removal",
+                file.display()
+            );
+            continue;
+        }
+
+        let hash = imghash::hash_sub(&img);
+        let the_same: Vec<_> = hashes
+            .iter()
+            .enumerate()
+            .filter(|(_, ignore)| hash.distance_to(**ignore) <= conf.similarity_threshold)
+            .map(|(i, _)| &hashes_path[i])
+            .collect();
+
+        if !the_same.is_empty() {
+            log::warn!(
+                "The ignored file '{}' is the same as: {:?}",
+                file.display(),
+                the_same,
+            );
+            continue;
+        }
+
+        hashes.push(hash);
+        hashes_path.push(file);
+    }
+
+    Ok(hashes)
+}
+
 fn tree_worker(
     rx: mpsc::Receiver<Payload>,
     mut tree: BKTree<VidSrc>,
@@ -347,7 +443,7 @@ fn tree_worker(
     log::debug!("Tree worker working");
 
     while let Ok(Payload { video_path, hashes }) = rx.recv() {
-        log::info!("Saving: {}", video_path.display());
+        log::info!("Finding dups of: {}", video_path.display());
 
         let similar_videos = find_similar_videos(
             hashes.iter().map(|(_, hash)| *hash),
@@ -368,6 +464,7 @@ fn tree_worker(
         log::info!("Done saving '{}'", video_path.display());
     }
 
+    tree.close().wrap_err("failed to close the tree")?;
     log::debug!("Tree worker not working");
     Ok(())
 }
@@ -377,16 +474,16 @@ fn save_video(
     tree: &mut BKTree<VidSrc>,
     video_path: &Path,
 ) -> eyre::Result<()> {
-    for (ts, hash) in hashes {
-        tree.add(
+    tree.add_all(hashes.into_iter().map(|(ts, hash)| {
+        (
             hash,
             VidSrc {
                 frame_pos: ts,
                 path: video_path.to_owned(),
             },
         )
-        .wrap_err("failed to add to the tree")?;
-    }
+    }))
+    .wrap_err("failed to add to the tree")?;
 
     Ok(())
 }

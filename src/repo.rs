@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use color_eyre::eyre::{self, Context};
+use color_eyre::eyre::{self, Context}; // TODO: use custom error type instead
 
 pub struct Repo {
     path: PathBuf,
@@ -42,18 +42,34 @@ impl Repo {
         let path = self.path.join(self.next_entry.to_string());
         fs::create_dir(&path).wrap_err("could not create the dir")?;
         self.next_entry += 1;
-        Ok(Entry { path })
+        Ok(Entry::open(path))
     }
 }
 
 impl Entry {
+    pub fn open(dir: impl Into<PathBuf>) -> Self {
+        let dir = dir.into();
+        assert!(dir.is_dir());
+        Self { path: dir }
+    }
+
+    pub fn sub_entry(&self, name: impl AsRef<Path>) -> eyre::Result<Self> {
+        let sub_path = self.path.join(name);
+        fs::create_dir(&sub_path).wrap_err("could not create the dir")?;
+        Ok(Self { path: sub_path })
+    }
+
     pub fn create_file(
         &self,
         name: impl AsRef<Path>,
         contents: &[u8],
     ) -> eyre::Result<()> {
-        let file =
-            File::create(self.path.join(name)).wrap_err("could not create file")?;
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.path.join(name))
+            .wrap_err("could not create file")?;
+
         let mut buf = io::BufWriter::new(file);
         buf.write_all(contents).wrap_err("failed to write")?;
         buf.flush().wrap_err("failed to flush")?;

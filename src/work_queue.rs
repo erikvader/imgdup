@@ -14,7 +14,15 @@ impl<T> WorkQueue<T> {
     }
 
     pub fn next(&self) -> Option<&T> {
+        self.next_index().map(|(_, t)| t)
+    }
+
+    pub fn next_index(&self) -> Option<(usize, &T)> {
         let cur = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.work.get(cur)
+        self.work.get(cur).map(|t| (cur, t))
+    }
+
+    pub fn len(&self) -> usize {
+        self.work.len()
     }
 }
