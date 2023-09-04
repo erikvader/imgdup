@@ -1,17 +1,18 @@
 use std::{
+    cell::OnceCell,
     cmp,
     collections::HashSet,
     ffi::OsString,
     num::NonZeroU32,
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{mpsc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use image::RgbImage;
+use image::{EncodableLayout, ImageOutputFormat, RgbImage};
 use imgdup::{
     bktree::BKTree,
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
@@ -21,7 +22,7 @@ use imgdup::{
         hamming::{Distance, Hamming},
     },
     imgutils::{self, RemoveBordersConf},
-    repo::Repo,
+    repo::{LazyEntry, Repo},
     work_queue::WorkQueue,
 };
 
@@ -197,7 +198,14 @@ fn main() -> eyre::Result<()> {
 
     log::info!("Processing {} new files", new_files.len());
     let work_queue = WorkQueue::new(new_files);
-    let repo = Repo::new(cli.dup_dir).wrap_err("failed to create the repo")?;
+    let repo_dup = Repo::new(cli.dup_dir).wrap_err("failed to create the dup repo")?;
+    let repo_grave = if let Some(grave) = cli.graveyard_dir {
+        Some(Mutex::new(
+            Repo::new(grave).wrap_err("failed to create graveyard repo")?,
+        ))
+    } else {
+        None
+    };
 
     thread::scope(|s| {
         let handles = {
@@ -209,7 +217,13 @@ fn main() -> eyre::Result<()> {
                 let video_thread = thread::Builder::new()
                     .name(format!("V{i:03}"))
                     .spawn_scoped(s, || {
-                        video_worker(tx, &work_queue, &video_conf, &ignored_hashes)
+                        video_worker(
+                            tx,
+                            &work_queue,
+                            &video_conf,
+                            &ignored_hashes,
+                            repo_grave.as_ref(),
+                        )
                     })
                     .expect("failed to spawn thread");
                 handles.push((format!("video_{i}"), video_thread));
@@ -217,7 +231,9 @@ fn main() -> eyre::Result<()> {
 
             let tree_thread = thread::Builder::new()
                 .name(format!("Tree"))
-                .spawn_scoped(s, || tree_worker(rx, tree, repo, cli.similarity_threshold))
+                .spawn_scoped(s, || {
+                    tree_worker(rx, tree, repo_dup, cli.similarity_threshold)
+                })
                 .expect("failed to spawn thread");
             handles.push(("tree".to_string(), tree_thread));
 
@@ -272,14 +288,14 @@ fn video_worker<'env>(
     tx: mpsc::SyncSender<Payload<'env>>,
     videos: &WorkQueue<&'env Path>,
     config: &VideoWorkerConf,
-    // TODO: repo for trash dir
     ignored_hashes: &[Hamming],
+    repo_graveyard: Option<&Mutex<Repo>>,
 ) -> eyre::Result<()> {
     log::debug!("Video worker at your service");
     while let Some((i, video)) = videos.next_index() {
         log::info!("Progress: {}/{} videos", i + 1, videos.len());
 
-        match get_hashes(video, ignored_hashes, config) {
+        match get_hashes(video, ignored_hashes, config, repo_graveyard) {
             Err(e) => {
                 log::error!("Failed to get hashes from '{}': {:?}", video.display(), e)
             }
@@ -303,6 +319,7 @@ fn get_hashes(
     video: &Path,
     ignored_hashes: &[Hamming],
     config: &VideoWorkerConf,
+    repo_graveyard: Option<&Mutex<Repo>>,
 ) -> eyre::Result<Vec<(Timestamp, Hamming)>> {
     log::info!("Retrieving hashes for: {}", video.display());
     let mut extractor =
@@ -320,6 +337,8 @@ fn get_hashes(
     let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
     let approx_len = Timestamp::duration_to_string(approx_len);
 
+    let mut graveyard_entry = LazyEntry::new();
+
     let mut last_logged = Instant::now();
     while let Some((ts, frame)) = extractor.next().wrap_err("Failed to get a frame")? {
         let now = Instant::now();
@@ -328,13 +347,34 @@ fn get_hashes(
             log::debug!("At timestamp: {}/{}", ts.to_string(), approx_len);
         }
 
-        if let Some(hash) = frame_to_hash(
-            frame,
+        use FrameToHashResult as F;
+        match frame_to_hash(
+            &frame,
             ignored_hashes,
             config,
             hashes.last().map(|(_, h)| *h),
         ) {
-            hashes.push((ts, hash));
+            F::Ok(hash) => hashes.push((ts, hash)),
+            res @ F::Ignored | res @ F::Empty if repo_graveyard.is_some() => {
+                let entry = graveyard_entry.get_or_init(|| {
+                    let mut entry =
+                        repo_graveyard.unwrap().lock().unwrap().new_entry()?;
+                    entry.create_link("original", video)?;
+                    Ok(entry)
+                })?;
+
+                let name = match res {
+                    F::Ignored => "ignored",
+                    F::Empty => "empty",
+                    _ => unreachable!(),
+                };
+                entry.create_file(format!("{}_{}.jpg", name, ts.to_string()), |w| {
+                    frame
+                        .write_to(w, ImageOutputFormat::Jpeg(95))
+                        .wrap_err("image failed to write")
+                })?;
+            }
+            _ => (),
         }
 
         extractor.seek_forward(step).wrap_err("Failed to seek")?;
@@ -344,17 +384,24 @@ fn get_hashes(
     Ok(hashes)
 }
 
+enum FrameToHashResult {
+    Empty,
+    Ignored,
+    TooSimilarToPrevious,
+    Ok(Hamming),
+}
+
 fn frame_to_hash(
-    frame: RgbImage,
+    frame: &RgbImage,
     ignored_hashes: &[Hamming],
     config: &VideoWorkerConf,
     last_hash: Option<Hamming>,
-) -> Option<Hamming> {
+) -> FrameToHashResult {
     let frame = imgutils::remove_borders(&frame, &config.border_conf);
 
     if imgutils::is_subimg_empty(&frame) {
         // TODO: save the original somewhere for later potential debugging
-        return None;
+        return FrameToHashResult::Empty;
     }
 
     let hash = imghash::hash_sub(&frame);
@@ -363,16 +410,15 @@ fn frame_to_hash(
         .iter()
         .any(|ignore| ignore.distance_to(hash) <= config.similarity_threshold)
     {
-        // TODO: save for debuggin
-        return None;
+        return FrameToHashResult::Ignored;
     }
 
     match last_hash {
         Some(last_hash) if hash.distance_to(last_hash) > config.similarity_threshold => {
-            Some(hash)
+            FrameToHashResult::Ok(hash)
         }
-        None => Some(hash),
-        _ => None,
+        None => FrameToHashResult::Ok(hash),
+        _ => FrameToHashResult::TooSimilarToPrevious,
     }
 }
 
@@ -493,19 +539,17 @@ fn link_dup(
     video_path: &Path,
     similar_videos: HashSet<PathBuf>,
 ) -> eyre::Result<()> {
-    let entry = repo
+    let mut entry = repo
         .new_entry()
         .wrap_err("failed to create repo entry for a new dup")?;
 
     entry
-        .create_link("0_the_new_one", video_path)
+        .create_link("the_new_one", video_path)
         .wrap_err("failed to link the new one")?;
 
-    for (i, similar) in similar_videos.into_iter().enumerate() {
-        let link_name = format!("1_dup_{i}");
-
+    for similar in similar_videos.into_iter() {
         entry
-            .create_link(link_name, similar)
+            .create_link("dup", similar)
             .wrap_err("failed to link a dup")?;
     }
 

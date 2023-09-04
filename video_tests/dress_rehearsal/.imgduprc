@@ -2,4 +2,5 @@
 --src-dirs _BUFFER_ _BUFFER_1
 --database-file imgdup.db
 --ignore-dir _IMGDUP_IGNORE_
+--graveyard-dir _GRAVEYARD_
 --video-threads 6

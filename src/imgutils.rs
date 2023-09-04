@@ -160,6 +160,8 @@ where
     img.width() == 0 || img.height() == 0
 }
 
+// TODO: image concat eller nåt
+
 #[cfg(test)]
 mod test {
     use super::*;
