@@ -1,5 +1,4 @@
 use std::{
-    cell::OnceCell,
     cmp,
     collections::HashSet,
     ffi::OsString,
@@ -12,9 +11,10 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use image::{EncodableLayout, ImageOutputFormat, RgbImage};
+use image::{ImageOutputFormat, RgbImage};
 use imgdup::{
     bktree::BKTree,
+    common::VidSrc,
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
     fsutils::{all_files, is_simple_relative, read_optional_file},
     imghash::{
@@ -145,20 +145,6 @@ fn cli_arguments() -> eyre::Result<Cli> {
     Ok(cli)
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct VidSrc {
-    frame_pos: Timestamp,
-    // TODO: figure out a way to not store the whole path for every single hash
-    path: PathBuf,
-}
-
-impl VidSrc {
-    pub fn new(frame_pos: Timestamp, path: PathBuf) -> Self {
-        assert!(is_simple_relative(&path));
-        Self { frame_pos, path }
-    }
-}
-
 fn main() -> eyre::Result<()> {
     init_logger_and_eyre()?;
     let cli = cli_arguments()?;
@@ -183,7 +169,7 @@ fn main() -> eyre::Result<()> {
         let mut tree_files = HashSet::new();
         tree.for_each(|_, src| {
             // TODO: https://doc.rust-lang.org/std/collections/struct.HashSet.html#method.get_or_insert_owned
-            tree_files.insert(src.path.clone());
+            tree_files.insert(src.path().to_owned());
         })?;
         tree_files
     };
@@ -193,10 +179,13 @@ fn main() -> eyre::Result<()> {
         .difference(&tree_files)
         .map(|pb| pb.as_path())
         .collect();
-    let removed_files: HashSet<_> = tree_files.difference(&src_files).collect();
+    let removed_files: HashSet<_> = tree_files
+        .difference(&src_files)
+        .map(|pb| pb.as_path())
+        .collect();
 
     log::info!("Removing {} removed files from the DB", removed_files.len());
-    tree.remove_any_of(|vidsrc| removed_files.contains(&vidsrc.path))?;
+    tree.remove_any_of(|vidsrc| removed_files.contains(vidsrc.path()))?;
 
     let video_conf = VideoWorkerConf::default()
         .similarity_threshold(cli.similarity_threshold)
@@ -577,7 +566,7 @@ fn find_similar_videos(
     let mut similar_videos = HashSet::new();
     for hash in hashes {
         tree.find_within(hash, similarity_threshold, |_, src| {
-            similar_videos.insert(src.path.clone());
+            similar_videos.insert(src.path().to_owned());
         })
         .wrap_err("failed to find_within")?;
     }
