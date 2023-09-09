@@ -1,7 +1,70 @@
 use std::{
-    fs, io,
-    path::{Path, PathBuf},
+    fs, io, iter,
+    path::{Component, Path, PathBuf},
 };
+
+/// Checks whether the given path is relative and only contains slashes and filenames
+pub fn is_simple_relative(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    if !path
+        .components()
+        .all(|comp| matches!(comp, Component::Normal(_)))
+    {
+        return false;
+    }
+
+    let Some(path) = path.as_os_str().to_str() else {
+        return false;
+    };
+
+    !path.contains("//")
+        && !path.contains("/./")
+        && !path.ends_with("/.")
+        && !path.ends_with("/")
+}
+
+/// Removes all .. at the beginning of the path
+pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
+    path.as_ref()
+        .components()
+        .skip_while(|comp| matches!(comp, Component::ParentDir))
+        .collect()
+}
+
+/// How many components long a simple relative path is
+fn simple_depth(path: impl AsRef<Path>) -> usize {
+    path.as_ref()
+        .components()
+        .inspect(|comp| {
+            if !matches!(comp, Component::Normal(_)) {
+                panic!("the path must be simple")
+            }
+        })
+        .count()
+}
+
+/// Create a symlink with a relative path to `target` at `link_name`.
+/// Both arguments must be relative to the current working directory.
+/// `link_name` must be a full path to a file to be created, not a directory to create the
+/// file in.
+pub fn symlink_relative(
+    target: impl AsRef<Path>,
+    link_name: impl AsRef<Path>,
+) -> io::Result<()> {
+    let target = target.as_ref();
+    let link_name = link_name.as_ref();
+    assert!(is_simple_relative(target));
+    assert!(is_simple_relative(link_name));
+
+    let depth = simple_depth(link_name);
+    assert!(depth >= 1);
+    let target: PathBuf = iter::repeat(Component::ParentDir)
+        .take(depth - 1)
+        .chain(target.components())
+        .collect();
+
+    std::os::unix::fs::symlink(target, link_name)
+}
 
 /// Behave more like `ln`. The symlink will always be absolute, relative `target` will be
 /// resolved against the current working directory. If the link_name is a directory, then
@@ -81,5 +144,27 @@ pub fn is_dir_empty(path: impl AsRef<Path>) -> io::Result<bool> {
         Ok(_) => Ok(false),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn simple_paths() {
+        assert!(is_simple_relative("a/b"));
+        assert!(is_simple_relative("a"));
+        assert!(is_simple_relative(".a"));
+        assert!(is_simple_relative("a/.b"));
+        assert!(is_simple_relative("a/b."));
+
+        assert!(!is_simple_relative("a//b"));
+        assert!(!is_simple_relative("/a/b"));
+        assert!(!is_simple_relative("./a/b"));
+        assert!(!is_simple_relative("a/b/"));
+        assert!(!is_simple_relative("a/b/."));
+        assert!(!is_simple_relative("a/./b"));
+        assert!(!is_simple_relative("a/../b"));
     }
 }

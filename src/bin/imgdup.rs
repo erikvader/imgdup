@@ -16,7 +16,7 @@ use image::{EncodableLayout, ImageOutputFormat, RgbImage};
 use imgdup::{
     bktree::BKTree,
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
-    fsutils::{all_files, read_optional_file},
+    fsutils::{all_files, is_simple_relative, read_optional_file},
     imghash::{
         self,
         hamming::{Distance, Hamming},
@@ -54,16 +54,27 @@ struct Cli {
     graveyard_dir: Option<PathBuf>,
 
     /// Where to place the results
-    #[arg(long, short = 'd')]
+    #[arg(long, short = 'd', value_parser = simple_path_parser)]
     dup_dir: PathBuf,
 
     /// Folders with files to find duplicates among
-    #[arg(long, short = 's', required = true, num_args=1..)]
+    #[arg(long, short = 's', required = true, num_args=1.., value_parser = simple_path_parser)]
     src_dirs: Vec<PathBuf>,
 
     /// Path to the database to use
     #[arg(long, short = 'f')]
     database_file: PathBuf,
+}
+
+fn simple_path_parser(s: &str) -> Result<PathBuf, String> {
+    if is_simple_relative(s) {
+        Ok(s.into())
+    } else {
+        Err(format!(
+            "path is not simple relative, i.e., is relative and only contains \
+                     normal components"
+        ))
+    }
 }
 
 // TODO: make this shared so all binaries can use it
@@ -139,6 +150,13 @@ struct VidSrc {
     frame_pos: Timestamp,
     // TODO: figure out a way to not store the whole path for every single hash
     path: PathBuf,
+}
+
+impl VidSrc {
+    pub fn new(frame_pos: Timestamp, path: PathBuf) -> Self {
+        assert!(is_simple_relative(&path));
+        Self { frame_pos, path }
+    }
 }
 
 fn main() -> eyre::Result<()> {
@@ -359,7 +377,7 @@ fn get_hashes(
                 let entry = graveyard_entry.get_or_init(|| {
                     let mut entry =
                         repo_graveyard.unwrap().lock().unwrap().new_entry()?;
-                    entry.create_link("original", video)?;
+                    entry.create_link_relative("original", video)?;
                     Ok(entry)
                 })?;
 
@@ -400,7 +418,6 @@ fn frame_to_hash(
     let frame = imgutils::remove_borders(&frame, &config.border_conf);
 
     if imgutils::is_subimg_empty(&frame) {
-        // TODO: save the original somewhere for later potential debugging
         return FrameToHashResult::Empty;
     }
 
@@ -520,15 +537,11 @@ fn save_video(
     tree: &mut BKTree<VidSrc>,
     video_path: &Path,
 ) -> eyre::Result<()> {
-    tree.add_all(hashes.into_iter().map(|(ts, hash)| {
-        (
-            hash,
-            VidSrc {
-                frame_pos: ts,
-                path: video_path.to_owned(),
-            },
-        )
-    }))
+    tree.add_all(
+        hashes
+            .into_iter()
+            .map(|(ts, hash)| (hash, VidSrc::new(ts, video_path.to_owned()))),
+    )
     .wrap_err("failed to add to the tree")?;
 
     Ok(())
@@ -544,12 +557,12 @@ fn link_dup(
         .wrap_err("failed to create repo entry for a new dup")?;
 
     entry
-        .create_link("the_new_one", video_path)
+        .create_link_relative("the_new_one", video_path)
         .wrap_err("failed to link the new one")?;
 
     for similar in similar_videos.into_iter() {
         entry
-            .create_link("dup", similar)
+            .create_link_relative("dup", similar)
             .wrap_err("failed to link a dup")?;
     }
 

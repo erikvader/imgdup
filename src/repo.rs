@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::{self, File},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
@@ -64,7 +64,7 @@ impl Entry {
         })
     }
 
-    fn next_path(&mut self, name: &Path) -> PathBuf {
+    fn next_path(&mut self, name: &OsStr) -> PathBuf {
         let p = ENTRY_PADDING;
         let mut num: OsString = format!("{:0p$}", self.next_entry).into();
         num.push("_");
@@ -73,7 +73,7 @@ impl Entry {
         self.path.join(num)
     }
 
-    pub fn sub_entry(&mut self, name: impl AsRef<Path>) -> eyre::Result<Self> {
+    pub fn sub_entry(&mut self, name: impl AsRef<OsStr>) -> eyre::Result<Self> {
         let sub_path = self.next_path(name.as_ref());
         fs::create_dir(&sub_path).wrap_err("could not create the dir")?;
         Ok(Self {
@@ -84,7 +84,7 @@ impl Entry {
 
     pub fn create_file<F>(
         &mut self,
-        name: impl AsRef<Path>,
+        name: impl AsRef<OsStr>,
         writer: F,
     ) -> eyre::Result<()>
     where
@@ -105,11 +105,22 @@ impl Entry {
 
     pub fn create_link(
         &mut self,
-        link_name: impl AsRef<Path>,
+        link_name: impl AsRef<OsStr>,
         target: impl AsRef<Path>,
     ) -> eyre::Result<()> {
         let link_name = self.next_path(link_name.as_ref());
         crate::fsutils::symlink(target, link_name).wrap_err("failed to create link")?;
+        Ok(())
+    }
+
+    pub fn create_link_relative(
+        &mut self,
+        link_name: impl AsRef<OsStr>,
+        target: impl AsRef<Path>,
+    ) -> eyre::Result<()> {
+        let link_name = self.next_path(link_name.as_ref());
+        crate::fsutils::symlink_relative(target, link_name)
+            .wrap_err("failed to create link")?;
         Ok(())
     }
 }
