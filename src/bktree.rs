@@ -22,7 +22,7 @@ pub struct BKTree<S> {
 }
 
 // TODO: rebuild. Ska det bara en grej i imgdup-edit? Kunna hämta percent dead och annan
-// data vore najs
+// data vore najs. Skötas automatiskt på flush?
 impl<S> BKTree<S>
 where
     S: Serialize + DeserializeOwned,

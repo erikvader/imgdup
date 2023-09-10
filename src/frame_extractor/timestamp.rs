@@ -4,7 +4,7 @@ use ffmpeg::Rational;
 
 extern crate ffmpeg_next as ffmpeg;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Timestamp {
     pub(super) timebase_numerator: i32,
     pub(super) timebase_denominator: i32,

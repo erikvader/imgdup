@@ -14,7 +14,7 @@ use color_eyre::eyre::{self, Context};
 use image::{ImageOutputFormat, RgbImage};
 use imgdup::{
     bktree::BKTree,
-    common::VidSrc,
+    common::{init_logger_and_eyre, VidSrc},
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
     fsutils::{all_files, is_simple_relative, read_optional_file},
     imghash::{
@@ -62,7 +62,7 @@ struct Cli {
     src_dirs: Vec<PathBuf>,
 
     /// Path to the database to use
-    #[arg(long, short = 'f')]
+    #[arg(long, short = 'f', default_value = "./imgdup.db")]
     database_file: PathBuf,
 }
 
@@ -75,52 +75,6 @@ fn simple_path_parser(s: &str) -> Result<PathBuf, String> {
                      normal components"
         ))
     }
-}
-
-// TODO: make this shared so all binaries can use it
-fn init_logger_and_eyre() -> eyre::Result<()> {
-    use color_eyre::config::{HookBuilder, Theme};
-    use simplelog::*;
-
-    let mut builder = ConfigBuilder::new();
-    builder.set_thread_level(LevelFilter::Error);
-    builder.set_target_level(LevelFilter::Off);
-    builder.set_location_level(LevelFilter::Trace);
-
-    builder.set_level_padding(LevelPadding::Right);
-    builder.set_thread_padding(ThreadPadding::Right(4));
-
-    builder.set_thread_mode(ThreadLogMode::Both);
-
-    // TODO: needed?
-    // builder.add_filter_allow_str("imgdup");
-
-    // NOTE: set_time_offset_to_local can only be run when there is only on thread active.
-    let timezone_failed = builder.set_time_offset_to_local().is_err();
-
-    let level = LevelFilter::Debug;
-    let (log_color, eyre_color) = if std::io::IsTerminal::is_terminal(&std::io::stdout())
-    {
-        (ColorChoice::Auto, Theme::dark())
-    } else {
-        (ColorChoice::Never, Theme::new())
-    };
-
-    HookBuilder::default()
-        .theme(eyre_color)
-        .install()
-        .wrap_err("Failed to install eyre")?;
-
-    TermLogger::init(level, builder.build(), TerminalMode::Stdout, log_color)
-        .wrap_err("Failed to set the logger")?;
-
-    if timezone_failed {
-        log::error!(
-            "Failed to set time zone for the logger, using UTC instead (I think)"
-        );
-    }
-
-    Ok(())
 }
 
 fn cli_arguments() -> eyre::Result<Cli> {
@@ -375,11 +329,7 @@ fn get_hashes(
                     F::Empty => "empty",
                     _ => unreachable!(),
                 };
-                entry.create_file(format!("{}_{}.jpg", name, ts.to_string()), |w| {
-                    frame
-                        .write_to(w, ImageOutputFormat::Jpeg(95))
-                        .wrap_err("image failed to write")
-                })?;
+                entry.create_jpg(format!("{}_{}.jpg", name, ts.to_string()), &frame)?;
             }
             _ => (),
         }

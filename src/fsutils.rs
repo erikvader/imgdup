@@ -35,6 +35,7 @@ pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
 fn simple_depth(path: impl AsRef<Path>) -> usize {
     path.as_ref()
         .components()
+        .filter(|comp| !matches!(comp, Component::CurDir))
         .inspect(|comp| {
             if !matches!(comp, Component::Normal(_)) {
                 panic!("the path must be simple")
@@ -53,8 +54,16 @@ pub fn symlink_relative(
 ) -> io::Result<()> {
     let target = target.as_ref();
     let link_name = link_name.as_ref();
-    assert!(is_simple_relative(target));
-    assert!(is_simple_relative(link_name));
+    assert!(
+        target.is_relative(),
+        "must be relative: {}",
+        target.display()
+    );
+    assert!(
+        link_name.is_relative(),
+        "must be relative: {}",
+        link_name.display()
+    );
 
     let depth = simple_depth(link_name);
     assert!(depth >= 1);

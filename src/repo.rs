@@ -1,11 +1,12 @@
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, BufWriter, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
 use color_eyre::eyre::{self, Context}; // TODO: use custom error type instead
+use image::{ImageBuffer, ImageOutputFormat};
 
 const ENTRY_PADDING: usize = 4;
 
@@ -103,6 +104,7 @@ impl Entry {
         Ok(())
     }
 
+    /// `target` is relative CWD, or absolute
     pub fn create_link(
         &mut self,
         link_name: impl AsRef<OsStr>,
@@ -113,6 +115,7 @@ impl Entry {
         Ok(())
     }
 
+    /// `target` is relative CWD
     pub fn create_link_relative(
         &mut self,
         link_name: impl AsRef<OsStr>,
@@ -122,6 +125,36 @@ impl Entry {
         crate::fsutils::symlink_relative(target, link_name)
             .wrap_err("failed to create link")?;
         Ok(())
+    }
+
+    pub fn create_jpg<P, C>(
+        &mut self,
+        jpg_name: impl AsRef<OsStr>,
+        image: &ImageBuffer<P, C>,
+    ) -> eyre::Result<()>
+    where
+        P: image::Pixel + image::PixelWithColorType,
+        [P::Subpixel]: image::EncodableLayout,
+        C: std::ops::Deref<Target = [P::Subpixel]>,
+    {
+        let jpg_name = Path::new(jpg_name.as_ref()).with_extension("jpg");
+        self.create_file(jpg_name, |w| {
+            image
+                .write_to(w, ImageOutputFormat::Jpeg(95))
+                .wrap_err("image failed to write")
+        })
+    }
+
+    pub fn create_text_file(
+        &mut self,
+        txt_name: impl AsRef<OsStr>,
+        contents: impl AsRef<str>,
+    ) -> eyre::Result<()> {
+        let txt_name = Path::new(txt_name.as_ref()).with_extension("txt");
+        self.create_file(txt_name, |w| {
+            w.write_all(contents.as_ref().as_bytes())
+                .wrap_err("failed to write string")
+        })
     }
 }
 

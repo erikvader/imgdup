@@ -241,7 +241,7 @@ impl<'a> FrameExtractor<'a> {
         })
     }
 
-    pub fn seek_to(&mut self, timestamp: Timestamp) -> Result<()> {
+    pub fn seek_to(&mut self, timestamp: &Timestamp) -> Result<()> {
         if timestamp.first_timestamp != self.first_timestamp
             || timestamp.timebase_numerator != self.timebase.numerator()
             || timestamp.timebase_denominator != self.timebase.denominator()
