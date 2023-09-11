@@ -1,4 +1,8 @@
-use std::{collections::HashMap, ffi::OsString, path::PathBuf};
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
@@ -43,12 +47,9 @@ struct Collision {
     other: Frame,
 }
 
-// TODO: log what is is doing
 fn main() -> eyre::Result<()> {
     init_logger_and_eyre()?;
     let cli = Cli::parse();
-
-    let mut repo_entry = Entry::open(".").wrap_err("failed to open the current dir")?;
 
     let ref_path = remove_dot_dot(
         std::fs::read_link(cli.reference_file)
@@ -61,6 +62,7 @@ fn main() -> eyre::Result<()> {
         .parent()
         .ok_or_else(|| eyre::eyre!("database file path doesn't have a parent path"))?;
 
+    let mut repo_entry = Entry::open(".").wrap_err("failed to open the current dir")?;
     let mut tree =
         BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
             format!(
@@ -69,85 +71,41 @@ fn main() -> eyre::Result<()> {
             )
         })?;
 
-    // TODO: extract function
-    let ref_frames: Vec<Frame> = {
-        let mut ref_frames = Vec::new();
-        tree.for_each(|hash, vidsrc| {
-            if vidsrc.path() == ref_path {
-                ref_frames.push(Frame {
-                    vidsrc: vidsrc.clone(),
-                    hash,
-                });
-            }
-        })?;
-        ref_frames
-    };
+    log::info!("Extracting frames for the reference video...");
+    let ref_frames: Vec<Frame> = extract_frames(&mut tree, &ref_path)?;
+    log::info!("Done!");
 
-    // TODO: extract  function
-    let collisions: Vec<Collision> = {
-        let mut collisions = Vec::new();
-        for ref_frame in ref_frames {
-            tree.find_within(
-                ref_frame.hash,
-                cli.similarity_threshold,
-                |other_hash, other_vidsrc| {
-                    collisions.push(Collision {
-                        reference: ref_frame.clone(),
-                        other: Frame {
-                            vidsrc: other_vidsrc.clone(),
-                            hash: other_hash,
-                        },
-                    })
-                },
-            )?;
-        }
-        collisions
-    };
+    log::info!("Finding the collisions for all reference frames...");
+    let collisions: Vec<Collision> =
+        find_collisions(&ref_frames, &mut tree, cli.similarity_threshold)?;
+    log::info!("Done!");
 
     tree.close()?;
 
-    // TODO: extract function
-    let images: HashMap<VidSrc, RgbImage> = {
-        let mut images = HashMap::new();
-        for collision in collisions.iter() {
-            for vidsrc in [&collision.reference.vidsrc, &collision.other.vidsrc] {
-                if !images.contains_key(vidsrc) {
-                    let full_path = root.join(vidsrc.path());
-                    let mut extractor =
-                        FrameExtractor::new(&full_path).wrap_err_with(|| {
-                            format!(
-                                "failed to open frame extractor for {}",
-                                full_path.display()
-                            )
-                        })?;
+    log::info!("Extracting the frames for all collisions...");
+    let images: HashMap<VidSrc, RgbImage> = read_images_from_videos(&collisions, root)?;
+    log::info!("Done!");
 
-                    // TODO: don't start from the beginning again
-                    for collision in collisions.iter() {
-                        for vidsrc2 in
-                            [&collision.reference.vidsrc, &collision.other.vidsrc]
-                        {
-                            if vidsrc2.path() == vidsrc.path()
-                                && !images.contains_key(vidsrc2)
-                            {
-                                extractor
-                                    .seek_to(vidsrc2.frame_pos())
-                                    .wrap_err("failed to seek")?;
+    log::info!("Saving everything to the repo entry...");
+    save_collisions(
+        &collisions,
+        &mut repo_entry,
+        root,
+        images,
+        cli.similarity_threshold,
+    )?;
+    log::info!("Done!");
 
-                                let Some((_, img)) = extractor.next().wrap_err("failed to get frame")? else {
-                                    eyre::bail!("should have returned an image");
-                                };
+    Ok(())
+}
 
-                                images.insert(vidsrc2.clone(), img);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        images
-    };
-
-    // TODO: extract function
+fn save_collisions(
+    collisions: &[Collision],
+    repo_entry: &mut Entry,
+    root: &Path,
+    images: HashMap<VidSrc, RgbImage>,
+    similarity_threshold: Distance,
+) -> eyre::Result<()> {
     for Collision { other, reference } in collisions {
         let mut entry = repo_entry
             .sub_entry("collision")
@@ -177,10 +135,94 @@ fn main() -> eyre::Result<()> {
             format!(
                 "{} <= {}",
                 other.hash.distance_to(reference.hash),
-                cli.similarity_threshold
+                similarity_threshold
             ),
         )?;
     }
-
     Ok(())
+}
+
+fn read_images_from_videos(
+    collisions: &[Collision],
+    root: &Path,
+) -> eyre::Result<HashMap<VidSrc, RgbImage>> {
+    let mut images = HashMap::new();
+    for collision in collisions.iter() {
+        for vidsrc in [&collision.reference.vidsrc, &collision.other.vidsrc] {
+            if !images.contains_key(vidsrc) {
+                let full_path = root.join(vidsrc.path());
+                log::info!("Opening: {}", full_path.display());
+                let mut extractor =
+                    FrameExtractor::new(&full_path).wrap_err_with(|| {
+                        format!(
+                            "failed to open frame extractor for {}",
+                            full_path.display()
+                        )
+                    })?;
+
+                // TODO: don't start from the beginning again
+                for collision in collisions.iter() {
+                    for vidsrc2 in [&collision.reference.vidsrc, &collision.other.vidsrc]
+                    {
+                        if vidsrc2.path() == vidsrc.path()
+                            && !images.contains_key(vidsrc2)
+                        {
+                            extractor
+                                .seek_to(vidsrc2.frame_pos())
+                                .wrap_err("failed to seek")?;
+
+                            let Some((_, img)) = extractor.next().wrap_err("failed to get frame")? else {
+                                eyre::bail!("should have returned an image");
+                            };
+
+                            images.insert(vidsrc2.clone(), img);
+                        }
+                    }
+                }
+
+                log::info!("Done with: {}", full_path.display());
+            }
+        }
+    }
+    Ok(images)
+}
+
+fn find_collisions(
+    ref_frames: &[Frame],
+    tree: &mut BKTree<VidSrc>,
+    similarity_threshold: Distance,
+) -> eyre::Result<Vec<Collision>> {
+    let mut collisions = Vec::new();
+    for ref_frame in ref_frames {
+        tree.find_within(
+            ref_frame.hash,
+            similarity_threshold,
+            |other_hash, other_vidsrc| {
+                collisions.push(Collision {
+                    reference: ref_frame.clone(),
+                    other: Frame {
+                        vidsrc: other_vidsrc.clone(),
+                        hash: other_hash,
+                    },
+                })
+            },
+        )?;
+    }
+    Ok(collisions)
+}
+
+fn extract_frames(
+    tree: &mut BKTree<VidSrc>,
+    ref_path: &Path,
+) -> eyre::Result<Vec<Frame>> {
+    let mut ref_frames = Vec::new();
+    tree.for_each(|hash, vidsrc| {
+        if vidsrc.path() == ref_path {
+            ref_frames.push(Frame {
+                vidsrc: vidsrc.clone(),
+                hash,
+            });
+        }
+    })?;
+    Ok(ref_frames)
 }
