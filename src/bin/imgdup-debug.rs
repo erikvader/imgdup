@@ -32,8 +32,8 @@ struct Cli {
     database_file: PathBuf,
 
     /// The file to compare against all other
-    #[arg(long, short = 'r', default_value = "0000_the_new_one")]
-    reference_file: OsString, // TODO: assert filename, i.e., no slashes nor has_prefix. Or exactly one normal component?
+    #[arg(long, short = 'r', default_value = "./0000_the_new_one")]
+    reference_file: PathBuf,
 }
 
 #[derive(Clone)]

@@ -1,5 +1,5 @@
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -7,6 +7,8 @@ use std::{
 
 use color_eyre::eyre::{self, Context}; // TODO: use custom error type instead
 use image::{ImageBuffer, ImageOutputFormat};
+
+use crate::fsutils::is_basename;
 
 const ENTRY_PADDING: usize = 4;
 
@@ -65,7 +67,7 @@ impl Entry {
         })
     }
 
-    fn next_path(&mut self, name: &OsStr) -> PathBuf {
+    fn next_path(&mut self, name: &Path) -> PathBuf {
         let p = ENTRY_PADDING;
         let mut num: OsString = format!("{:0p$}", self.next_entry).into();
         num.push("_");
@@ -74,8 +76,10 @@ impl Entry {
         self.path.join(num)
     }
 
-    pub fn sub_entry(&mut self, name: impl AsRef<OsStr>) -> eyre::Result<Self> {
-        let sub_path = self.next_path(name.as_ref());
+    pub fn sub_entry(&mut self, name: impl AsRef<Path>) -> eyre::Result<Self> {
+        let name = name.as_ref();
+        assert!(is_basename(name));
+        let sub_path = self.next_path(name);
         fs::create_dir(&sub_path).wrap_err("could not create the dir")?;
         Ok(Self {
             path: sub_path,
@@ -85,13 +89,15 @@ impl Entry {
 
     pub fn create_file<F>(
         &mut self,
-        name: impl AsRef<OsStr>,
+        name: impl AsRef<Path>,
         writer: F,
     ) -> eyre::Result<()>
     where
         F: FnOnce(&mut BufWriter<File>) -> eyre::Result<()>,
     {
-        let file_path = self.next_path(name.as_ref());
+        let name = name.as_ref();
+        assert!(is_basename(name));
+        let file_path = self.next_path(name);
         let file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -107,10 +113,12 @@ impl Entry {
     /// `target` is relative CWD, or absolute
     pub fn create_link(
         &mut self,
-        link_name: impl AsRef<OsStr>,
+        link_name: impl AsRef<Path>,
         target: impl AsRef<Path>,
     ) -> eyre::Result<()> {
-        let link_name = self.next_path(link_name.as_ref());
+        let link_name = link_name.as_ref();
+        assert!(is_basename(link_name));
+        let link_name = self.next_path(link_name);
         crate::fsutils::symlink(target, link_name).wrap_err("failed to create link")?;
         Ok(())
     }
@@ -118,10 +126,12 @@ impl Entry {
     /// `target` is relative CWD
     pub fn create_link_relative(
         &mut self,
-        link_name: impl AsRef<OsStr>,
+        link_name: impl AsRef<Path>,
         target: impl AsRef<Path>,
     ) -> eyre::Result<()> {
-        let link_name = self.next_path(link_name.as_ref());
+        let link_name = link_name.as_ref();
+        assert!(is_basename(link_name));
+        let link_name = self.next_path(link_name);
         crate::fsutils::symlink_relative(target, link_name)
             .wrap_err("failed to create link")?;
         Ok(())
@@ -129,7 +139,7 @@ impl Entry {
 
     pub fn create_jpg<P, C>(
         &mut self,
-        jpg_name: impl AsRef<OsStr>,
+        jpg_name: impl AsRef<Path>,
         image: &ImageBuffer<P, C>,
     ) -> eyre::Result<()>
     where
@@ -137,7 +147,9 @@ impl Entry {
         [P::Subpixel]: image::EncodableLayout,
         C: std::ops::Deref<Target = [P::Subpixel]>,
     {
-        let jpg_name = Path::new(jpg_name.as_ref()).with_extension("jpg");
+        let jpg_name = jpg_name.as_ref();
+        assert!(is_basename(jpg_name));
+        let jpg_name = Path::new(jpg_name).with_extension("jpg");
         self.create_file(jpg_name, |w| {
             image
                 .write_to(w, ImageOutputFormat::Jpeg(95))
@@ -147,10 +159,12 @@ impl Entry {
 
     pub fn create_text_file(
         &mut self,
-        txt_name: impl AsRef<OsStr>,
+        txt_name: impl AsRef<Path>,
         contents: impl AsRef<str>,
     ) -> eyre::Result<()> {
-        let txt_name = Path::new(txt_name.as_ref()).with_extension("txt");
+        let txt_name = txt_name.as_ref();
+        assert!(is_basename(txt_name));
+        let txt_name = Path::new(txt_name).with_extension("txt");
         self.create_file(txt_name, |w| {
             w.write_all(contents.as_ref().as_bytes())
                 .wrap_err("failed to write string")

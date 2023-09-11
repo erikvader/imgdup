@@ -3,6 +3,18 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+/// Checks whether the path is simply a filename, i.e., a normal part of a path.
+pub fn is_basename(path: impl AsRef<Path>) -> bool {
+    // TODO: handle trailing slashes
+    // https://github.com/proot-me/proot-rs/issues/41
+    // https://github.com/rust-lang/rust/issues/29008
+    let mut components = path.as_ref().components();
+    let Some(Component::Normal(_)) = components.next() else {
+        return false;
+    };
+    components.next().is_none()
+}
+
 /// Checks whether the given path is relative and only contains slashes and filenames
 pub fn is_simple_relative(path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();
