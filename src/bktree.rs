@@ -79,7 +79,12 @@ where
     }
 
     pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
-        self.add_internal(hash, value)?;
+        if self.root().is_null() {
+            let root = self.db.allocate(BKNode::new(hash, value))?;
+            self.set_root(root);
+        } else {
+            self.add_internal(self.root(), hash, value)?;
+        }
         self.db.checkpoint()?;
         Ok(())
     }
@@ -88,36 +93,46 @@ where
         &mut self,
         items: impl IntoIterator<Item = (Hamming, S)>,
     ) -> heap::Result<()> {
+        let mut items = items.into_iter();
+        if let Some((hash, value)) = items.next() {
+            if self.root().is_null() {
+                let root = self.db.allocate(BKNode::new(hash, value))?;
+                self.set_root(root);
+            } else {
+                self.add_internal(self.root(), hash, value)?;
+            }
+        }
+
         for (hash, value) in items {
-            self.add_internal(hash, value)?;
+            self.add_internal(self.root(), hash, value)?;
         }
         self.db.checkpoint()?;
         Ok(())
     }
 
-    fn add_internal(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
-        if self.root().is_null() {
-            let root = self.db.allocate(BKNode::new(hash, value))?;
-            self.set_root(root);
-        } else {
-            let mut cur_ref = self.root();
-            loop {
-                let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
-                let dist = cur_node.hash.distance_to(hash);
+    fn add_internal(
+        &mut self,
+        mut cur_ref: Ref,
+        hash: Hamming,
+        value: S,
+    ) -> heap::Result<()> {
+        assert!(!cur_ref.is_null());
+        loop {
+            let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
+            let dist = cur_node.hash.distance_to(hash);
 
-                if let Some(&child_ref) = cur_node.children.get(&dist) {
-                    cur_ref = child_ref;
-                } else {
-                    let new_ref =
-                        self.db.allocate_local(cur_ref, BKNode::new(hash, value))?;
-                    let cur_node = self
-                        .db
-                        .deref_mut(cur_ref)?
-                        .expect("the previous deref worked");
+            if let Some(&child_ref) = cur_node.children.get(&dist) {
+                cur_ref = child_ref;
+            } else {
+                let new_ref =
+                    self.db.allocate_local(cur_ref, BKNode::new(hash, value))?;
+                let cur_node = self
+                    .db
+                    .deref_mut(cur_ref)?
+                    .expect("the previous deref worked");
 
-                    cur_node.children.insert(dist, new_ref);
-                    break;
-                }
+                cur_node.children.insert(dist, new_ref);
+                break;
             }
         }
 
