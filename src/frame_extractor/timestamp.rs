@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use ffmpeg::Rational;
 
@@ -22,7 +22,7 @@ impl Timestamp {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    fn parts(&self) -> (bool, f64, f64, f64, f64) {
         // TODO: Why not use ffmpeg rescale and rational if not all decimals are going to
         // be used?
         let mut total: f64 = (self.timestamp as f64 - self.first_timestamp as f64)
@@ -30,9 +30,9 @@ impl Timestamp {
 
         let negative = if total < 0.0 {
             total = -total;
-            "-"
+            true
         } else {
-            ""
+            false
         };
 
         let subsec = (total.fract() * 1e3).trunc();
@@ -46,10 +46,7 @@ impl Timestamp {
 
         let seconds = total;
 
-        format!(
-            "{}{:02}:{:02}:{:02}.{:03}",
-            negative, hours, minutes, seconds, subsec
-        )
+        (negative, hours, minutes, seconds, subsec)
     }
 
     pub fn duration_to_string(dur: Duration) -> String {
@@ -61,6 +58,18 @@ impl Timestamp {
             0,
         )
         .to_string()
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (negative, hours, minutes, seconds, subsec) = self.parts();
+        let negative = negative.then_some("-").unwrap_or("");
+        write!(
+            f,
+            "{}{:02}:{:02}:{:02}.{:03}",
+            negative, hours, minutes, seconds, subsec
+        )
     }
 }
 

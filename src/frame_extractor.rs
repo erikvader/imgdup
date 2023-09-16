@@ -180,9 +180,16 @@ impl<'a> FrameExtractor<'a> {
                     }
                 }
 
-                *cur_timestamp = frame
-                    .timestamp()
-                    .expect("this is always set by the decoder?");
+                if let Some(ts) = frame.timestamp() {
+                    *cur_timestamp = ts;
+                } else {
+                    let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
+                    log::error!(
+                        "Frame doesn't have a timestamp somewhere after: {}",
+                        dur
+                    );
+                    continue;
+                }
 
                 if *cur_timestamp < *seek_target_timestamp {
                     continue;
