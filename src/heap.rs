@@ -11,6 +11,9 @@ type Uuid = i64;
 const UUID_FIRST: Uuid = 0;
 const UUID_NULL: Uuid = Uuid::min_value();
 
+const META_NEXT_ID: &str = "next_id";
+const META_USER: &str = "user";
+
 pub type Result<T> = std::result::Result<T, HeapError>;
 
 #[derive(thiserror::Error, Debug)]
@@ -25,7 +28,7 @@ pub enum HeapError {
     RefNotExists(Ref),
 }
 
-pub struct Heap<T> {
+pub struct Heap<T, M> {
     cache: PriorityQueue<Uuid, Block<T>>,
     dirty_changes: usize,
     cache_age: usize,
@@ -33,7 +36,7 @@ pub struct Heap<T> {
     config: Config,
     // -- saved in db --
     next_id: Uuid,
-    root: Ref,
+    user_meta: M,
 }
 
 struct Config {
@@ -94,28 +97,32 @@ impl HeapBuilder {
         self
     }
 
-    pub fn in_memory<T>(self) -> Result<Heap<T>>
+    pub fn in_memory<T, M>(self) -> Result<Heap<T, M>>
     where
         T: Serialize + DeserializeOwned,
+        M: Serialize + DeserializeOwned + Default,
     {
         Heap::new(Sql::new_in_memory()?, self.config)
     }
 
-    pub fn from_file<T>(self, file: impl AsRef<Path>) -> Result<Heap<T>>
+    pub fn from_file<T, M>(self, file: impl AsRef<Path>) -> Result<Heap<T, M>>
     where
         T: Serialize + DeserializeOwned,
+        M: Serialize + DeserializeOwned + Default,
     {
         Heap::new(Sql::new_from_file(file)?, self.config)
     }
 }
 
-impl<T> Heap<T>
+impl<T, M> Heap<T, M>
 where
+    // TODO: only force these where actually required
     T: Serialize + DeserializeOwned,
+    M: Serialize + DeserializeOwned + Default,
 {
     fn new(sql: Sql, config: Config) -> Result<Self> {
-        let next_id = sql.get_meta::<Uuid>("next_id")?.unwrap_or(UUID_FIRST);
-        let root = sql.get_meta::<Ref>("root")?.unwrap_or(Ref::null());
+        let next_id = sql.get_meta::<Uuid>(META_NEXT_ID)?.unwrap_or(UUID_FIRST);
+        let user_meta = sql.get_meta::<M>(META_USER)?.unwrap_or_default();
 
         sql.begin()?;
 
@@ -124,9 +131,9 @@ where
             dirty_changes: 0,
             cache_age: 0,
             next_id,
-            root,
             config,
             sql,
+            user_meta,
         })
     }
 
@@ -174,16 +181,16 @@ where
         }
     }
 
-    pub fn root(&self) -> Ref {
-        self.root
+    pub fn get_user_meta(&self) -> &M {
+        &self.user_meta
     }
 
-    pub fn set_root(&mut self, root: Ref) {
-        self.root = root;
+    pub fn get_user_meta_mut(&mut self) -> &mut M {
+        &mut self.user_meta
     }
 
-    pub fn clear_root(&mut self) {
-        self.root = Ref::null();
+    pub fn set_user_meta(&mut self, meta: M) {
+        self.user_meta = meta;
     }
 
     // NOTE: for testing
@@ -272,8 +279,8 @@ where
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        self.sql.put_meta("next_id", self.next_id)?;
-        self.sql.put_meta("root", self.root)?;
+        self.sql.put_meta(META_NEXT_ID, self.next_id)?;
+        self.sql.put_meta(META_USER, &self.user_meta)?;
 
         for (&id, block) in self.cache.iter() {
             match block.state {
@@ -406,9 +413,10 @@ impl<T> Ord for Block<T> {
 mod test {
     use super::*;
 
-    impl<T> Heap<T>
+    impl<T, M> Heap<T, M>
     where
         T: Serialize + DeserializeOwned,
+        M: Serialize + DeserializeOwned + Default,
     {
         pub fn reset(&mut self) -> Result<()> {
             self.flush()?;
@@ -432,7 +440,7 @@ mod test {
 
     #[test]
     fn test_insert() -> Result<()> {
-        let mut db = Heap::<i32>::new_in_memory()?;
+        let mut db = Heap::<i32, ()>::new_in_memory()?;
         let r = db.allocate(5)?;
         assert_eq!(Some(&5), db.deref(r)?);
         assert_eq!(Some(BlockState::Dirty), db.state_of(r));
@@ -453,7 +461,7 @@ mod test {
     fn test_insert_blocks() -> Result<()> {
         let mut db = HeapBuilder::new()
             .maximum_block_size(2)
-            .in_memory::<i32>()?;
+            .in_memory::<i32, ()>()?;
 
         let first = db.allocate(1)?;
         let second = db.allocate(2)?;
@@ -477,7 +485,7 @@ mod test {
     fn test_remove() -> Result<()> {
         let mut db = HeapBuilder::new()
             .maximum_block_size(2)
-            .in_memory::<i32>()?;
+            .in_memory::<i32, ()>()?;
 
         let r1 = db.allocate(3)?;
         assert_eq!(Some(&3), db.deref(r1)?);

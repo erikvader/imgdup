@@ -22,6 +22,15 @@ impl Node {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Root(Ref);
+
+impl Default for Root {
+    fn default() -> Self {
+        Self(Ref::null())
+    }
+}
+
 impl List {
     fn new() -> Self {
         Self { head: Ref::null() }
@@ -35,7 +44,7 @@ impl List {
         self.head
     }
 
-    fn add(&mut self, db: &mut Heap<Node>, data: i32) -> heap::Result<()> {
+    fn add(&mut self, db: &mut Heap<Node, Root>, data: i32) -> heap::Result<()> {
         if self.head.is_null() {
             self.head = db.allocate(Node::new(data))?;
             return Ok(());
@@ -54,7 +63,7 @@ impl List {
         Ok(())
     }
 
-    fn remove(&mut self, db: &mut Heap<Node>, data: i32) -> heap::Result<()> {
+    fn remove(&mut self, db: &mut Heap<Node, Root>, data: i32) -> heap::Result<()> {
         let mut prev = Ref::null();
         let mut next = self.head;
         while let Some(node) = db.deref(next)? {
@@ -73,7 +82,7 @@ impl List {
         Ok(())
     }
 
-    fn to_vec(&self, db: &mut Heap<Node>) -> heap::Result<Vec<i32>> {
+    fn to_vec(&self, db: &mut Heap<Node, Root>) -> heap::Result<Vec<i32>> {
         let mut vec = Vec::new();
         let mut next = self.head;
         while let Some(node) = db.deref(next)? {
@@ -88,13 +97,13 @@ impl List {
 fn test_write_to_file() -> Result<()> {
     let tmp_path = tmp_path();
 
-    let mut db = Heap::<Node>::new_from_file(&tmp_path)?;
+    let mut db = Heap::<Node, Root>::new_from_file(&tmp_path)?;
     let r1 = db.allocate(Node::new(5))?;
-    db.set_root(r1);
+    db.set_user_meta(Root(r1));
     db.close()?;
 
-    let mut db = Heap::<Node>::new_from_file(&tmp_path)?;
-    let r2 = db.root();
+    let mut db = Heap::<Node, Root>::new_from_file(&tmp_path)?;
+    let r2 = db.get_user_meta().0;
     assert_eq!(r1, r2);
     assert_eq!(Some(5), db.deref(r2)?.map(|l| l.data));
     db.close()?;
@@ -137,7 +146,7 @@ fn test_linked_list_remove() -> Result<()> {
 #[test]
 fn test_linked_list_stress_no_blocks() -> Result<()> {
     let tmp_path = tmp_path();
-    let mut db: Heap<Node> = HeapBuilder::new()
+    let mut db: Heap<Node, Root> = HeapBuilder::new()
         .cache_capacity(20)
         .dirtyness_limit(5)
         .maximum_block_size(1)
@@ -148,10 +157,10 @@ fn test_linked_list_stress_no_blocks() -> Result<()> {
     assert_eq!(reference.len(), db.count_refs()?);
     assert_eq!(reference, list.to_vec(&mut db)?);
 
-    db.set_root(list.head());
+    db.set_user_meta(Root(list.head()));
     db.close()?;
-    let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
-    let list = List::from_existing(db.root());
+    let mut db: Heap<Node, Root> = Heap::new_from_file(&tmp_path)?;
+    let list = List::from_existing(db.get_user_meta().0);
     assert_eq!(reference.len(), db.count_refs()?);
     assert_eq!(reference, list.to_vec(&mut db)?);
 
@@ -161,7 +170,7 @@ fn test_linked_list_stress_no_blocks() -> Result<()> {
 #[test]
 fn test_linked_list_stress() -> Result<()> {
     let tmp_path = tmp_path();
-    let mut db: Heap<Node> = HeapBuilder::new()
+    let mut db: Heap<Node, Root> = HeapBuilder::new()
         .cache_capacity(20)
         .dirtyness_limit(5)
         .maximum_block_size(10)
@@ -172,17 +181,17 @@ fn test_linked_list_stress() -> Result<()> {
     let refs_before = db.count_refs()?;
     assert_eq!(reference, list.to_vec(&mut db)?);
 
-    db.set_root(list.head());
+    db.set_user_meta(Root(list.head()));
     db.close()?;
-    let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
-    let list = List::from_existing(db.root());
+    let mut db: Heap<Node, Root> = Heap::new_from_file(&tmp_path)?;
+    let list = List::from_existing(db.get_user_meta().0);
     assert_eq!(refs_before, db.count_refs()?);
     assert_eq!(reference, list.to_vec(&mut db)?);
 
     Ok(())
 }
 
-fn list_stress(db: &mut Heap<Node>) -> Result<(List, Vec<i32>)> {
+fn list_stress(db: &mut Heap<Node, Root>) -> Result<(List, Vec<i32>)> {
     let seed: u64 = rand::random();
     println!("Using seed: {}", seed);
     let mut rng = SmallRng::seed_from_u64(seed);
@@ -216,19 +225,19 @@ fn list_stress(db: &mut Heap<Node>) -> Result<(List, Vec<i32>)> {
 #[test]
 fn test_linked_list_crash() -> Result<()> {
     let tmp_path = tmp_path();
-    let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
+    let mut db: Heap<Node, Root> = Heap::new_from_file(&tmp_path)?;
 
     let mut list = List::new();
     list.add(&mut db, 1)?;
-    db.set_root(list.head());
+    db.set_user_meta(Root(list.head()));
     db.flush()?;
 
     list.add(&mut db, 2)?;
     assert_eq!(vec![1, 2], list.to_vec(&mut db)?);
     drop(db); // a panic or something caused it to drop before calling close
 
-    let mut db: Heap<Node> = Heap::new_from_file(&tmp_path)?;
-    let list = List::from_existing(db.root());
+    let mut db: Heap<Node, Root> = Heap::new_from_file(&tmp_path)?;
+    let list = List::from_existing(db.get_user_meta().0);
     assert_eq!(vec![1], list.to_vec(&mut db)?);
 
     Ok(())

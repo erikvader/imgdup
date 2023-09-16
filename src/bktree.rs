@@ -11,6 +11,17 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize)]
+struct Meta {
+    root: Ref,
+}
+
+impl Default for Meta {
+    fn default() -> Self {
+        Self { root: Ref::null() }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct BKNode<S> {
     hash: Hamming,
     value: Option<S>,
@@ -18,7 +29,7 @@ struct BKNode<S> {
 }
 
 pub struct BKTree<S> {
-    db: Heap<BKNode<S>>,
+    db: Heap<BKNode<S>, Meta>,
 }
 
 // TODO: rebuild. Ska det bara en grej i imgdup-edit? Kunna hämta percent dead och annan
@@ -36,8 +47,16 @@ where
         Ok(Self::new(Heap::new_in_memory()?))
     }
 
-    fn new(db: Heap<BKNode<S>>) -> Self {
+    fn new(db: Heap<BKNode<S>, Meta>) -> Self {
         Self { db }
+    }
+
+    fn root(&self) -> Ref {
+        self.db.get_user_meta().root
+    }
+
+    fn set_root(&mut self, new_root: Ref) {
+        self.db.get_user_meta_mut().root = new_root;
     }
 
     pub fn close(self) -> heap::Result<()> {
@@ -67,11 +86,11 @@ where
     }
 
     fn add_internal(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
-        if self.db.root().is_null() {
+        if self.root().is_null() {
             let root = self.db.allocate(BKNode::new(hash, value))?;
-            self.db.set_root(root);
+            self.set_root(root);
         } else {
-            let mut cur_ref = self.db.root();
+            let mut cur_ref = self.root();
             loop {
                 let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
                 let dist = cur_node.hash.distance_to(hash);
@@ -95,7 +114,6 @@ where
         Ok(())
     }
 
-    // TODO: iterator interface would be nicer
     pub fn find_within<F>(
         &mut self,
         hash: Hamming,
@@ -105,11 +123,11 @@ where
     where
         F: FnMut(Hamming, &S),
     {
-        if self.db.root().is_null() {
+        if self.root().is_null() {
             return Ok(());
         }
 
-        let mut stack = vec![self.db.root()];
+        let mut stack = vec![self.root()];
         while let Some(cur_ref) = stack.pop() {
             let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
             let dist = cur_node.hash.distance_to(hash);
@@ -134,28 +152,25 @@ where
         P: FnMut(&S) -> bool,
     {
         self.for_each_internal(
-            |node| node.value.as_ref().is_some_and(|value| predicate(value)),
-            |node| node.value = None,
+            |_, node| node.value.as_ref().is_some_and(|value| predicate(value)),
+            |_, node| node.value = None,
         )?;
         self.db.checkpoint()?;
         Ok(())
     }
 
-    // TODO: an iterator iterface would probably be nicer. It could maybe yield instances
-    // of some struct that has a getter, setter and remover to only make the BKNode dirty
-    // when necessary.
     pub fn for_each<F>(&mut self, mut visit: F) -> heap::Result<()>
     where
         F: FnMut(Hamming, &S),
     {
         self.for_each_internal(
-            |node| {
+            |_, node| {
                 if let Some(value) = &node.value {
                     visit(node.hash, value);
                 }
                 false
             },
-            |_| (),
+            |_, _| (),
         )
     }
 
@@ -165,22 +180,22 @@ where
         mut modifier: M,
     ) -> heap::Result<()>
     where
-        F: FnMut(&BKNode<S>) -> bool,
-        M: FnMut(&mut BKNode<S>),
+        F: FnMut(Ref, &BKNode<S>) -> bool,
+        M: FnMut(Ref, &mut BKNode<S>),
     {
         let mut stack = Vec::new();
-        if !self.db.root().is_null() {
-            stack.push(self.db.root());
+        if !self.root().is_null() {
+            stack.push(self.root());
         }
 
         while let Some(cur_ref) = stack.pop() {
             let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
             stack.extend(cur_node.children.values());
 
-            if filter(&cur_node) {
+            if filter(cur_ref, &cur_node) {
                 let cur_node =
                     self.db.deref_mut(cur_ref)?.expect("previous deref worked");
-                modifier(cur_node);
+                modifier(cur_ref, cur_node);
             }
         }
 
