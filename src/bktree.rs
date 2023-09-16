@@ -32,8 +32,6 @@ pub struct BKTree<S> {
     db: Heap<BKNode<S>, Meta>,
 }
 
-// TODO: rebuild. Ska det bara en grej i imgdup-edit? Kunna hämta percent dead och annan
-// data vore najs. Skötas automatiskt på flush?
 impl<S> BKTree<S>
 where
     S: Serialize + DeserializeOwned,
@@ -63,9 +61,21 @@ where
         self.db.close()
     }
 
-    // TODO: räkna antalet levande noder och antalet döda noder
     pub fn count_nodes(&mut self) -> heap::Result<(usize, usize)> {
-        todo!()
+        let mut alive = 0;
+        let mut dead = 0;
+        self.for_each_internal(
+            |_, node| {
+                if node.value.is_some() {
+                    alive += 1;
+                } else {
+                    dead += 1;
+                }
+                false
+            },
+            |_, _| (),
+        )?;
+        Ok((alive, dead))
     }
 
     pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
@@ -278,6 +288,10 @@ mod test {
             ],
             all
         );
+
+        let (alive, dead) = tree.count_nodes()?;
+        assert_eq!(2, alive);
+        assert_eq!(1, dead);
 
         Ok(())
     }

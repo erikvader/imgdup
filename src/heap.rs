@@ -116,7 +116,6 @@ impl HeapBuilder {
 
 impl<T, M> Heap<T, M>
 where
-    // TODO: only force these where actually required
     T: Serialize + DeserializeOwned,
     M: Serialize + DeserializeOwned + Default,
 {
