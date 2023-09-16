@@ -45,6 +45,7 @@ pub struct FrameExtractor<'a> {
     first_timestamp: i64,
     timebase: Rational,
     video_stream_index: usize,
+    orientation: Orientation,
 
     // the file name
     path: Cow<'a, Path>,
@@ -98,6 +99,8 @@ impl<'a> FrameExtractor<'a> {
             video.duration()
         };
 
+        let orientation = get_orientation(&video);
+
         let decoder = CodecContext::from_parameters(video.parameters())
             .wrap_err("No codec found")?
             .decoder()
@@ -120,6 +123,7 @@ impl<'a> FrameExtractor<'a> {
             seek_target_timestamp,
             first_timestamp,
             timebase,
+            orientation,
             path: PathBuf::new().into(),
         })
     }
@@ -153,6 +157,7 @@ impl<'a> FrameExtractor<'a> {
             seek_target_timestamp,
             timebase,
             first_timestamp,
+            orientation,
             ..
         } = self;
 
@@ -188,6 +193,7 @@ impl<'a> FrameExtractor<'a> {
                     .run(&frame, &mut converted)
                     .wrap_err("Failed to convert the decoded frame")?;
                 let img = create_rust_image(converted);
+                let img = undo_rotation(img, *orientation);
 
                 let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
                 return Ok(Some((dur, img)));
@@ -287,6 +293,50 @@ impl<'a> FrameExtractor<'a> {
         } = self;
 
         timestamp2duration(end_timestamp - first_timestamp, *timebase)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Orientation {
+    Normal,
+    Left,
+    Right,
+    Upside,
+}
+
+fn get_orientation(video: &ffmpeg::Stream) -> Orientation {
+    // TODO: Rotation can also be set in the metadata dict, find an example video and fix!
+    for data in video.side_data() {
+        if data.kind() != ffmpeg::packet::side_data::Type::DisplayMatrix {
+            continue;
+        }
+        let rot = unsafe {
+            ffmpeg_sys_next::av_display_rotation_get(data.data().as_ptr() as *const i32)
+        };
+
+        if rot.is_finite() {
+            return match rot.round() as i32 {
+                -90 => Orientation::Right,
+                90 => Orientation::Left,
+                0 => Orientation::Normal,
+                180 | -180 => Orientation::Upside,
+                x => {
+                    log::warn!("Weird orientation angle: {x}");
+                    Orientation::Normal
+                }
+            };
+        }
+    }
+
+    Orientation::Normal
+}
+
+fn undo_rotation(img: RgbImage, ori: Orientation) -> RgbImage {
+    match ori {
+        Orientation::Normal => img,
+        Orientation::Right => image::imageops::rotate90(&img),
+        Orientation::Left => image::imageops::rotate270(&img),
+        Orientation::Upside => image::imageops::rotate180(&img),
     }
 }
 
