@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{io::Write, path::Path};
 
 // TODO: https://github.com/meilisearch/heed ??

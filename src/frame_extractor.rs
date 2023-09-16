@@ -17,7 +17,7 @@ use ffmpeg::frame::Video as FrameVideo;
 use ffmpeg::media::Type;
 use ffmpeg::software::scaling::context::Context as ScalingContext;
 use ffmpeg::util::log as ffmpeglog;
-use ffmpeg::{threading, Dictionary, Packet as CodecPacket, Rational, Rescale};
+use ffmpeg::{Dictionary, Packet as CodecPacket, Rational, Rescale};
 use ffmpeg_sys_next::{AV_NOPTS_VALUE, AV_TIME_BASE_Q};
 use image::RgbImage;
 
@@ -214,7 +214,7 @@ impl<'a> FrameExtractor<'a> {
                         break;
                     }
                     Err(e) => {
-                        eyre::bail!("Failed to read a packet from the stream");
+                        eyre::bail!("Failed to read a packet from the stream: {e}");
                     }
                 }
             }

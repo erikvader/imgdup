@@ -5,7 +5,6 @@ pub mod fsutils;
 pub mod heap;
 pub mod imghash;
 pub mod imgutils;
-pub mod log;
 pub mod perf;
 pub mod plot;
 pub mod repo;

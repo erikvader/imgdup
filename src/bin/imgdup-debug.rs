@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    ffi::OsString,
     path::{Path, PathBuf},
 };
 

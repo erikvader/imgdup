@@ -1,6 +1,6 @@
-use std::{ops::Deref, path::Path, sync::OnceLock};
+use std::sync::OnceLock;
 
-use image::{GenericImageView, Pixel, RgbImage, SubImage};
+use image::{GenericImageView, Pixel, SubImage};
 
 use self::hamming::{Distance, Hamming};
 

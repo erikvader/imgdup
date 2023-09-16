@@ -1,13 +1,9 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser};
+use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use image::{DynamicImage, GenericImageView, RgbImage};
-use imgdup::{
-    frame_extractor::FrameExtractor,
-    imgutils::{self, RemoveBordersConf},
-};
-use rand::{thread_rng, Rng};
+use image::{DynamicImage, GenericImageView};
+use imgdup::imgutils::{self, RemoveBordersConf};
 
 #[derive(Parser)]
 #[command()]

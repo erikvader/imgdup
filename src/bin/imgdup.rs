@@ -11,7 +11,7 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use image::{ImageOutputFormat, RgbImage};
+use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
     common::{init_logger_and_eyre, VidSrc},

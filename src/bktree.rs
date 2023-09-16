@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::Path};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -286,6 +283,8 @@ impl<S> BKNode<S> {
 
 #[cfg(test)]
 mod test {
+    use std::{collections::HashSet, path::PathBuf};
+
     use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
     use super::*;
