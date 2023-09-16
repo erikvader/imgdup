@@ -466,14 +466,18 @@ unsafe extern "C" fn ffmpeg_log_adaptor(
 
     let class_name = {
         if !avcl.is_null() {
-            let avcl = *(avcl as *const *const ffmpeg_sys_next::AVClass);
-            std::ffi::CStr::from_ptr((*avcl).class_name).to_string_lossy()
+            let avc = *(avcl as *const *const ffmpeg_sys_next::AVClass);
+            if let Some(fun) = (*avc).item_name {
+                std::ffi::CStr::from_ptr(fun(avcl)).to_string_lossy()
+            } else {
+                "NULL_item".into()
+            }
         } else {
-            "NULL".into()
+            "NULL_avcl".into()
         }
     };
 
-    let target = format!("{}::ffmpeg::'{class_name}'", module_path!());
+    let target = format!("ffmpeg::{class_name}");
     let level = match ffmpeglog::Level::try_from(level) {
         Ok(ffmpeglog::Level::Verbose) => log::Level::Trace,
         Ok(ffmpeglog::Level::Trace) => log::Level::Trace,
