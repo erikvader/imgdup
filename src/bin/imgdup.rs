@@ -272,8 +272,17 @@ fn video_worker<'env>(
                     hashes,
                 };
 
-                if let Err(_) = tx.send(load) {
-                    eyre::bail!("The receiver is down");
+                if let Err(load) = match tx.try_send(load) {
+                    Ok(()) => Ok(()),
+                    Err(mpsc::TrySendError::Full(load)) => {
+                        log::warn!("The channel is full");
+                        Err(load)
+                    }
+                    Err(mpsc::TrySendError::Disconnected(load)) => Err(load),
+                } {
+                    if let Err(_) = tx.send(load) {
+                        eyre::bail!("The receiver is down");
+                    }
                 }
             }
         }
