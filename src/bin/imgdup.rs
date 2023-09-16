@@ -42,8 +42,13 @@ struct Cli {
     #[arg(long, default_value_t = imghash::DEFAULT_SIMILARITY_THRESHOLD)]
     similarity_threshold: Distance,
 
+    /// Use this many threads reading video files
     #[arg(long, short = 'j', default_value = "1")]
     video_threads: NonZeroU32,
+
+    /// Only process up to this many new video files
+    #[arg(long, default_value_t = usize::MAX)]
+    limit: usize,
 
     /// Folder of pictures to ignore
     #[arg(long, short = 'i')]
@@ -131,6 +136,7 @@ fn main() -> eyre::Result<()> {
 
     let new_files: Vec<_> = src_files
         .difference(&tree_files)
+        .take(cli.limit)
         .map(|pb| pb.as_path())
         .collect();
     let removed_files: HashSet<_> = tree_files
