@@ -83,7 +83,7 @@ where
             let root = self.db.allocate(BKNode::new(hash, value))?;
             self.set_root(root);
         } else {
-            self.add_internal(self.root(), hash, value)?;
+            self.add_internal_new(hash, value)?;
         }
         self.db.checkpoint()?;
         Ok(())
@@ -99,23 +99,26 @@ where
                 let root = self.db.allocate(BKNode::new(hash, value))?;
                 self.set_root(root);
             } else {
-                self.add_internal(self.root(), hash, value)?;
+                self.add_internal_new(hash, value)?;
             }
         }
 
         for (hash, value) in items {
-            self.add_internal(self.root(), hash, value)?;
+            self.add_internal_new(hash, value)?;
         }
         self.db.checkpoint()?;
         Ok(())
     }
 
-    fn add_internal(
+    fn add_internal<A>(
         &mut self,
         mut cur_ref: Ref,
         hash: Hamming,
-        value: S,
-    ) -> heap::Result<()> {
+        allocator: A,
+    ) -> heap::Result<()>
+    where
+        A: FnOnce(&mut Self, Ref) -> heap::Result<Ref>,
+    {
         assert!(!cur_ref.is_null());
         loop {
             let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
@@ -124,8 +127,7 @@ where
             if let Some(&child_ref) = cur_node.children.get(&dist) {
                 cur_ref = child_ref;
             } else {
-                let new_ref =
-                    self.db.allocate_local(cur_ref, BKNode::new(hash, value))?;
+                let new_ref = allocator(self, cur_ref)?;
                 let cur_node = self
                     .db
                     .deref_mut(cur_ref)?
@@ -139,6 +141,15 @@ where
         Ok(())
     }
 
+    fn add_internal_new(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
+        self.add_internal(self.root(), hash, |selff, parent_ref| {
+            selff
+                .db
+                .allocate_local(parent_ref, BKNode::new(hash, value))
+        })
+    }
+
+    // TODO: is it possible to somehow make this use `for_each_internal`?
     pub fn find_within<F>(
         &mut self,
         hash: Hamming,
@@ -226,6 +237,41 @@ where
 
         Ok(())
     }
+
+    // TODO: use this in a imgdup-edit or something
+    pub fn rebuild(&mut self) -> heap::Result<()> {
+        if self.root().is_null() {
+            return Ok(());
+        }
+
+        // NOTE: make sure everything is on disk to make a reversal possible, in case
+        // anything fails
+        self.db.flush()?;
+
+        let mut stack: Vec<Ref> = vec![self.root()];
+        self.set_root(Ref::null());
+
+        while let Some(cur_ref) = stack.pop() {
+            let cur_node = self.db.deref_mut(cur_ref)?.expect("should exist");
+            stack.extend(cur_node.children.drain().map(|(_, child_ref)| child_ref));
+
+            if cur_node.value.is_some() {
+                let hash = cur_node.hash;
+                let root = self.root();
+                if root.is_null() {
+                    self.set_root(cur_ref);
+                } else {
+                    self.add_internal(root, hash, |_, _| Ok(cur_ref))?;
+                }
+            } else {
+                self.db.remove(cur_ref)?;
+            }
+        }
+
+        self.db.checkpoint()?;
+
+        Ok(())
+    }
 }
 
 impl<S> BKNode<S> {
@@ -304,9 +350,17 @@ mod test {
             all
         );
 
-        let (alive, dead) = tree.count_nodes()?;
-        assert_eq!(2, alive);
-        assert_eq!(1, dead);
+        assert_eq!((2, 1), tree.count_nodes()?);
+        tree.rebuild()?;
+        assert_eq!((2, 0), tree.count_nodes()?);
+
+        assert_eq!(
+            vec![
+                (Hamming(0b100), "4".to_string()),
+                (Hamming(0b101), "5_2".to_string()),
+            ],
+            all
+        );
 
         Ok(())
     }
