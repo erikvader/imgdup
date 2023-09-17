@@ -184,10 +184,7 @@ impl<'a> FrameExtractor<'a> {
                     *cur_timestamp = ts;
                 } else {
                     let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
-                    log::error!(
-                        "Frame doesn't have a timestamp somewhere after: {}",
-                        dur
-                    );
+                    log::warn!("Frame doesn't have a timestamp somewhere after: {}", dur);
                     continue;
                 }
 
@@ -522,15 +519,24 @@ unsafe extern "C" fn ffmpeg_log_adaptor(
     rust_str.truncate(rust_str.trim_end().len());
 
     let class_name = {
-        if !avcl.is_null() {
-            let avc = *(avcl as *const *const ffmpeg_sys_next::AVClass);
-            if let Some(fun) = (*avc).item_name {
-                std::ffi::CStr::from_ptr(fun(avcl)).to_string_lossy()
-            } else {
-                "NULL_item".into()
-            }
-        } else {
+        if avcl.is_null() {
             "NULL_avcl".into()
+        } else {
+            let avc = *(avcl as *const *const ffmpeg_sys_next::AVClass);
+            if avc.is_null() {
+                "NULL_avc".into()
+            } else {
+                if let Some(fun) = (*avc).item_name {
+                    let item = std::ffi::CStr::from_ptr(fun(avcl)).to_string_lossy();
+                    if item == "NULL" {
+                        std::ffi::CStr::from_ptr((*avc).class_name).to_string_lossy()
+                    } else {
+                        item
+                    }
+                } else {
+                    "NULL_item".into()
+                }
+            }
         }
     };
 
