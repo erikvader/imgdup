@@ -11,6 +11,10 @@ type Uuid = i64;
 const UUID_FIRST: Uuid = 0;
 const UUID_NULL: Uuid = Uuid::min_value();
 
+pub const DEFAULT_CACHE_CAPACITY: usize = 4096;
+pub const DEFAULT_DIRTYNESS_LIMIT: usize = usize::MAX;
+pub const DEFAULT_MAXIMUM_BLOCK_SIZE: usize = 100;
+
 const META_NEXT_ID: &str = "next_id";
 const META_USER: &str = "user";
 
@@ -72,9 +76,9 @@ impl HeapBuilder {
         Self {
             config: Config {
                 // TODO: make these tweakable from CLI arguments
-                cache_capacity: 2048,
-                dirtyness_limit: 128,
-                maximum_block_size: 10,
+                cache_capacity: DEFAULT_CACHE_CAPACITY,
+                dirtyness_limit: DEFAULT_DIRTYNESS_LIMIT,
+                maximum_block_size: DEFAULT_MAXIMUM_BLOCK_SIZE,
             },
         }
     }
@@ -526,4 +530,23 @@ mod test {
 
         Ok(())
     }
+}
+
+#[test]
+fn estimate_cache_mem_usage() {
+    // NOTE: This is here to be an easy way to calculate an estimate of the total memory
+    // usage of a full cache
+    use crate::common::VidSrc;
+    use std::mem::size_of;
+
+    let cache_entry = size_of::<(Uuid, Block<VidSrc>)>();
+    let block_entry = size_of::<(Uuid, VidSrc)>();
+    println!("cache_entry: {cache_entry}");
+    println!("block_entry: {block_entry}");
+
+    let total = DEFAULT_CACHE_CAPACITY * DEFAULT_MAXIMUM_BLOCK_SIZE * block_entry
+        + DEFAULT_CACHE_CAPACITY * cache_entry;
+    println!("total: {total}");
+
+    assert!(true)
 }

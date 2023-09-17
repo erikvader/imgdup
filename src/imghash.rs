@@ -6,7 +6,7 @@ use self::hamming::{Distance, Hamming};
 
 pub mod hamming;
 
-pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 32;
+pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 23;
 
 static HASHER: OnceLock<Hasher> = OnceLock::new();
 
