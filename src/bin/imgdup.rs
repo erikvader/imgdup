@@ -347,12 +347,10 @@ fn get_hashes(
                     Ok(entry)
                 })?;
 
-                let name = match res {
-                    F::Ignored => "ignored",
-                    F::Empty => "empty",
-                    _ => unreachable!(),
-                };
-                entry.create_jpg(format!("{}_{}.jpg", name, ts.to_string()), &frame)?;
+                entry.create_jpg(
+                    format!("{}_{}.jpg", res.name(), ts.to_string()),
+                    &frame,
+                )?;
             }
             _ => (),
         }
@@ -369,6 +367,17 @@ enum FrameToHashResult {
     Ignored,
     TooSimilarToPrevious,
     Ok(Hamming),
+}
+
+impl FrameToHashResult {
+    fn name(&self) -> &'static str {
+        match self {
+            FrameToHashResult::Empty => "empty",
+            FrameToHashResult::Ignored => "ignored",
+            FrameToHashResult::TooSimilarToPrevious => "similar_previous",
+            FrameToHashResult::Ok(_) => "ok",
+        }
+    }
 }
 
 fn frame_to_hash(
@@ -471,6 +480,7 @@ fn read_ignored(
     Ok(hashes)
 }
 
+// TODO: handle ctrl+c and properly close the db
 fn tree_worker(
     rx: mpsc::Receiver<Payload>,
     mut tree: BKTree<VidSrc>,

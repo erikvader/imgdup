@@ -533,9 +533,9 @@ mod test {
 }
 
 #[test]
+// NOTE: This is here to be an easy way to calculate an estimate of the total memory
+// usage of a full cache
 fn estimate_cache_mem_usage() {
-    // NOTE: This is here to be an easy way to calculate an estimate of the total memory
-    // usage of a full cache
     use crate::common::VidSrc;
     use std::mem::size_of;
 
