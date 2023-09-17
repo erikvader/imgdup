@@ -1,0 +1,5 @@
+--dup-dir _DUPS_
+--src-dirs _BUFFER_
+--database-file imgdup.db
+--ignore-dir _IGNORE_
+--graveyard-dir _GRAVEYARD_
