@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     fs::File,
     path::{Path, PathBuf},
 };
@@ -10,14 +11,32 @@ use crate::{frame_extractor::timestamp::Timestamp, fsutils::is_simple_relative};
 #[derive(serde::Serialize, serde::Deserialize, Clone, Hash, PartialEq, Eq)]
 pub struct VidSrc {
     frame_pos: Timestamp,
-    // TODO: figure out a way to not store the whole path for every single hash
     path: PathBuf,
+    mirrored: Mirror,
+}
+
+#[derive(
+    serde::Serialize, serde::Deserialize, Copy, Clone, Hash, PartialEq, Eq, Debug,
+)]
+pub enum Mirror {
+    Normal,
+    Mirrored,
+}
+
+impl fmt::Display for Mirror {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
+    }
 }
 
 impl VidSrc {
-    pub fn new(frame_pos: Timestamp, path: PathBuf) -> Self {
+    pub fn new(frame_pos: Timestamp, path: PathBuf, mirrored: Mirror) -> Self {
         assert!(is_simple_relative(&path));
-        Self { frame_pos, path }
+        Self {
+            frame_pos,
+            path,
+            mirrored,
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -26,6 +45,10 @@ impl VidSrc {
 
     pub fn frame_pos(&self) -> &Timestamp {
         &self.frame_pos
+    }
+
+    pub fn mirrored(&self) -> Mirror {
+        self.mirrored
     }
 }
 

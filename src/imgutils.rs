@@ -1,4 +1,4 @@
-use image::imageops::{self, crop_imm, FilterType};
+use image::imageops::{self, crop_imm, flip_horizontal_in_place, FilterType};
 use image::math::Rect;
 use image::{GenericImageView, GrayImage, ImageBuffer, Pixel, RgbImage, SubImage};
 
@@ -160,7 +160,10 @@ where
     img.width() == 0 || img.height() == 0
 }
 
-// TODO: image concat eller nåt
+pub fn mirror(mut img: RgbImage) -> RgbImage {
+    flip_horizontal_in_place(&mut img);
+    img
+}
 
 #[cfg(test)]
 mod test {

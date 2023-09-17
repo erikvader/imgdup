@@ -14,7 +14,7 @@ use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
-    common::{init_logger_and_eyre, VidSrc},
+    common::{init_logger_and_eyre, Mirror, VidSrc},
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
     fsutils::{all_files, is_simple_relative, read_optional_file},
     imghash::{
@@ -222,7 +222,7 @@ fn main() -> eyre::Result<()> {
 #[derive(Debug)]
 struct Payload<'env> {
     video_path: &'env Path,
-    hashes: Vec<(Timestamp, Hamming)>,
+    hashes: Vec<(Timestamp, Hamming, Mirror)>,
 }
 
 struct VideoWorkerConf {
@@ -296,7 +296,7 @@ fn get_hashes(
     ignored_hashes: &[Hamming],
     config: &VideoWorkerConf,
     repo_graveyard: Option<&Mutex<Repo>>,
-) -> eyre::Result<Vec<(Timestamp, Hamming)>> {
+) -> eyre::Result<Vec<(Timestamp, Hamming, Mirror)>> {
     log::info!("Retrieving hashes for: {}", video.display());
     let mut extractor =
         FrameExtractor::new(video).wrap_err("Failed to create the extractor")?;
@@ -328,9 +328,17 @@ fn get_hashes(
             &frame,
             ignored_hashes,
             config,
-            hashes.last().map(|(_, h)| *h),
+            hashes.last().map(|(_, h, _)| *h),
         ) {
-            F::Ok(hash) => hashes.push((ts, hash)),
+            F::Ok(hash) => {
+                hashes.push((ts.clone(), hash, Mirror::Normal));
+                let mirror = imgutils::mirror(frame);
+                if let F::Ok(hash) =
+                    frame_to_hash(&mirror, ignored_hashes, config, Some(hash))
+                {
+                    hashes.push((ts, hash, Mirror::Mirrored));
+                }
+            }
             res @ F::Ignored | res @ F::Empty if repo_graveyard.is_some() => {
                 let entry = graveyard_entry.get_or_init(|| {
                     let mut entry =
@@ -412,40 +420,52 @@ fn read_ignored(
     let all_files: Vec<_> = all_files([dir]).wrap_err("failed to read dir")?;
     let mut hashes = Vec::with_capacity(all_files.len());
     let mut hashes_path = Vec::with_capacity(all_files.len());
+    let mut hashes_mirrored: Vec<bool> = Vec::with_capacity(all_files.len());
 
     for file in all_files.iter() {
-        let img = image::open(&file)
+        let mut img = image::open(&file)
             .wrap_err_with(|| format!("could not open {} as an image", file.display()))?
             .to_rgb8();
 
-        let img = imgutils::remove_borders(&img, &conf.border_conf);
-        if imgutils::is_subimg_empty(&img) {
-            log::warn!(
-                "The ignored file '{}' is empty after border removal",
-                file.display()
-            );
-            continue;
+        for mirrored in [false, true] {
+            if mirrored {
+                img = imgutils::mirror(img);
+            }
+
+            let img = imgutils::remove_borders(&img, &conf.border_conf);
+            if imgutils::is_subimg_empty(&img) {
+                log::warn!(
+                    "The ignored file '{}' is empty after border removal (mirror={mirrored})",
+                    file.display()
+                );
+                continue;
+            }
+
+            let hash = imghash::hash_sub(&img);
+            let the_same: Vec<_> = hashes
+                .iter()
+                .enumerate()
+                .filter(|(_, ignore)| {
+                    hash.distance_to(**ignore) <= conf.similarity_threshold
+                })
+                .filter(|(i, _)| !hashes_mirrored[*i])
+                .map(|(i, _)| &hashes_path[i])
+                .filter(|coll_path| coll_path != &&file)
+                .collect();
+
+            if !the_same.is_empty() {
+                log::warn!(
+                    "The ignored file '{}' (mirrored={mirrored}) is the same as: {:?}",
+                    file.display(),
+                    the_same,
+                );
+                continue;
+            }
+
+            hashes.push(hash);
+            hashes_path.push(file);
+            hashes_mirrored.push(mirrored);
         }
-
-        let hash = imghash::hash_sub(&img);
-        let the_same: Vec<_> = hashes
-            .iter()
-            .enumerate()
-            .filter(|(_, ignore)| hash.distance_to(**ignore) <= conf.similarity_threshold)
-            .map(|(i, _)| &hashes_path[i])
-            .collect();
-
-        if !the_same.is_empty() {
-            log::warn!(
-                "The ignored file '{}' is the same as: {:?}",
-                file.display(),
-                the_same,
-            );
-            continue;
-        }
-
-        hashes.push(hash);
-        hashes_path.push(file);
     }
 
     Ok(hashes)
@@ -461,41 +481,41 @@ fn tree_worker(
 
     while let Ok(Payload { video_path, hashes }) = rx.recv() {
         log::info!("Finding dups of: {}", video_path.display());
-
         let similar_videos = find_similar_videos(
-            hashes.iter().map(|(_, hash)| *hash),
+            hashes.iter().map(|(_, hash, _)| *hash),
             &mut tree,
             similarity_threshold,
         )
         .wrap_err("failed to find similar videos")?;
+        log::info!("Found {} duplicate videos", similar_videos.len());
 
         if !similar_videos.is_empty() {
-            log::info!("'{}' has dups", video_path.display());
             link_dup(&mut repo, video_path, similar_videos)
                 .wrap_err("failed to link dup")?;
         }
 
+        log::info!("Saving {} hashes", hashes.len());
         save_video(hashes, &mut tree, video_path)
             .wrap_err("failed to save some video hashes to the tree")?;
-
-        log::info!("Done saving '{}'", video_path.display());
+        log::info!("Done saving");
     }
 
+    log::info!("Closing the tree");
     tree.close().wrap_err("failed to close the tree")?;
+    log::info!("Closed!");
+
     log::debug!("Tree worker not working");
     Ok(())
 }
 
 fn save_video(
-    hashes: Vec<(Timestamp, Hamming)>,
+    hashes: Vec<(Timestamp, Hamming, Mirror)>,
     tree: &mut BKTree<VidSrc>,
     video_path: &Path,
 ) -> eyre::Result<()> {
-    tree.add_all(
-        hashes
-            .into_iter()
-            .map(|(ts, hash)| (hash, VidSrc::new(ts, video_path.to_owned()))),
-    )
+    tree.add_all(hashes.into_iter().map(|(ts, hash, mirrored)| {
+        (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
+    }))
     .wrap_err("failed to add to the tree")?;
 
     Ok(())

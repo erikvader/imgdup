@@ -76,7 +76,7 @@ fn main() -> eyre::Result<()> {
 
     log::info!("Finding the collisions for all reference frames...");
     let collisions: Vec<Collision> =
-        find_collisions(&ref_frames, &mut tree, cli.similarity_threshold)?;
+        find_collisions(&ref_frames, &ref_path, &mut tree, cli.similarity_threshold)?;
     log::info!("Done!");
 
     tree.close()?;
@@ -126,6 +126,11 @@ fn save_collisions(
         entry.create_text_file(
             "reference_timestamp",
             reference.vidsrc.frame_pos().to_string(),
+        )?;
+        entry.create_text_file("collided_mirror", other.vidsrc.mirrored().to_string())?;
+        entry.create_text_file(
+            "reference_mirror",
+            reference.vidsrc.mirrored().to_string(),
         )?;
         entry.create_text_file("collided_hash", other.hash.to_base64())?;
         entry.create_text_file("reference_hash", reference.hash.to_base64())?;
@@ -188,6 +193,7 @@ fn read_images_from_videos(
 
 fn find_collisions(
     ref_frames: &[Frame],
+    ref_path: &Path,
     tree: &mut BKTree<VidSrc>,
     similarity_threshold: Distance,
 ) -> eyre::Result<Vec<Collision>> {
@@ -197,13 +203,15 @@ fn find_collisions(
             ref_frame.hash,
             similarity_threshold,
             |other_hash, other_vidsrc| {
-                collisions.push(Collision {
-                    reference: ref_frame.clone(),
-                    other: Frame {
-                        vidsrc: other_vidsrc.clone(),
-                        hash: other_hash,
-                    },
-                })
+                if ref_path != other_vidsrc.path() {
+                    collisions.push(Collision {
+                        reference: ref_frame.clone(),
+                        other: Frame {
+                            vidsrc: other_vidsrc.clone(),
+                            hash: other_hash,
+                        },
+                    })
+                }
             },
         )?;
     }
