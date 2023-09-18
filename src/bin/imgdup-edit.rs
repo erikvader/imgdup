@@ -4,7 +4,7 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup::{
     bktree::BKTree,
-    common::{init_logger_and_eyre, VidSrc},
+    common::{init_eyre, init_logger, VidSrc},
 };
 
 #[derive(Parser, Debug)]
@@ -38,7 +38,8 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
 }
 
 fn main() -> eyre::Result<()> {
-    init_logger_and_eyre()?;
+    init_eyre()?;
+    init_logger(None)?;
     let cli = Cli::parse();
 
     let mut tree =

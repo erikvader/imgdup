@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre;
-use imgdup::{common::init_logger_and_eyre, frame_extractor::FrameExtractor};
+use imgdup::{
+    common::{init_eyre, init_logger},
+    frame_extractor::FrameExtractor,
+};
 
 #[derive(Parser)]
 #[command()]
@@ -29,7 +32,8 @@ struct Cli {
 }
 
 fn main() -> eyre::Result<()> {
-    init_logger_and_eyre()?;
+    init_eyre()?;
+    init_logger(None)?;
     let cli = Cli::parse();
 
     if !cli.outdir.is_dir() {

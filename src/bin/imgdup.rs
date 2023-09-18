@@ -14,7 +14,7 @@ use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
-    common::{init_logger_and_eyre, Mirror, VidSrc},
+    common::{init_eyre, init_logger, Mirror, VidSrc},
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
     fsutils::{all_files, is_simple_relative, read_optional_file},
     imghash::{
@@ -49,6 +49,10 @@ struct Cli {
     /// Only process up to this many new video files
     #[arg(long, default_value_t = usize::MAX)]
     limit: usize,
+
+    /// A file to additionally write the logs to
+    #[arg(long)]
+    logfile: Option<PathBuf>,
 
     /// Folder of pictures to ignore
     #[arg(long, short = 'i')]
@@ -87,8 +91,8 @@ fn cli_arguments() -> eyre::Result<Cli> {
     let mut args: Vec<OsString> = std::env::args_os().collect();
 
     if args.len() == 1 {
-        if let Some(flags) =
-            read_optional_file(ARGS_FILE).wrap_err("Could not read config file")?
+        if let Some(flags) = read_optional_file(ARGS_FILE)
+            .wrap_err_with(|| format!("Could not read config file at: {ARGS_FILE}"))?
         {
             args.extend(
                 flags
@@ -98,15 +102,13 @@ fn cli_arguments() -> eyre::Result<Cli> {
         }
     }
 
-    log::debug!("Parsing arguments: {args:?}");
-    let cli = Cli::parse_from(args);
-    log::debug!("Parsed: {cli:?}");
-    Ok(cli)
+    Ok(Cli::parse_from(args))
 }
 
 fn main() -> eyre::Result<()> {
-    init_logger_and_eyre()?;
+    init_eyre()?;
     let cli = cli_arguments()?;
+    init_logger(cli.logfile.as_deref())?;
 
     let mut tree =
         BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {

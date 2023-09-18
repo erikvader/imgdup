@@ -8,7 +8,7 @@ use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
-    common::{init_logger_and_eyre, VidSrc},
+    common::{init_eyre, init_logger, VidSrc},
     frame_extractor::FrameExtractor,
     fsutils::{is_simple_relative, remove_dot_dot},
     imghash::{
@@ -47,7 +47,8 @@ struct Collision {
 }
 
 fn main() -> eyre::Result<()> {
-    init_logger_and_eyre()?;
+    init_eyre()?;
+    init_logger(None)?;
     let cli = Cli::parse();
 
     let ref_path = remove_dot_dot(

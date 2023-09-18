@@ -52,8 +52,21 @@ impl VidSrc {
     }
 }
 
-pub fn init_logger_and_eyre() -> eyre::Result<()> {
+pub fn init_eyre() -> eyre::Result<()> {
     use color_eyre::config::{HookBuilder, Theme};
+    let eyre_color = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        Theme::dark()
+    } else {
+        Theme::new()
+    };
+
+    HookBuilder::default()
+        .theme(eyre_color)
+        .install()
+        .wrap_err("Failed to install eyre")
+}
+
+pub fn init_logger(logfile: Option<&Path>) -> eyre::Result<()> {
     use simplelog::*;
 
     let mut builder = ConfigBuilder::new();
@@ -70,17 +83,11 @@ pub fn init_logger_and_eyre() -> eyre::Result<()> {
     let timezone_failed = builder.set_time_offset_to_local().is_err();
 
     let level = LevelFilter::Debug;
-    let (log_color, eyre_color) = if std::io::IsTerminal::is_terminal(&std::io::stdout())
-    {
-        (ColorChoice::Auto, Theme::dark())
+    let log_color = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        ColorChoice::Auto
     } else {
-        (ColorChoice::Never, Theme::new())
+        ColorChoice::Never
     };
-
-    HookBuilder::default()
-        .theme(eyre_color)
-        .install()
-        .wrap_err("Failed to install eyre")?;
 
     let mut loggers: Vec<Box<dyn SharedLogger>> = vec![TermLogger::new(
         level,
@@ -89,15 +96,13 @@ pub fn init_logger_and_eyre() -> eyre::Result<()> {
         log_color,
     )];
 
-    // TODO: a way to disable per application? Create a unique one for each?
-    const LOGFILE: &str = "/tmp/imgdup.log";
-    let logfile_failed = match File::create(LOGFILE) {
+    let logfile_failed = logfile.and_then(|logfile| match File::create(logfile) {
         Ok(f) => {
             loggers.push(WriteLogger::new(level, builder.build(), f));
             None
         }
         Err(e) => Some(e),
-    };
+    });
 
     CombinedLogger::init(loggers).wrap_err("Failed to set the logger")?;
 
@@ -107,10 +112,15 @@ pub fn init_logger_and_eyre() -> eyre::Result<()> {
         );
     }
 
-    if let Some(e) = logfile_failed {
-        log::error!("Failed to create the log file at '{LOGFILE}' because: {e}");
-    } else {
-        log::debug!("Logging to: {LOGFILE}");
+    if let Some(logfile) = logfile {
+        if let Some(e) = logfile_failed {
+            log::error!(
+                "Failed to create the log file at '{}' because: {e}",
+                logfile.display()
+            );
+        } else {
+            log::debug!("Logging to: {}", logfile.display());
+        }
     }
 
     Ok(())
