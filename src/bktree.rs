@@ -33,6 +33,8 @@ impl<S> BKTree<S>
 where
     S: Serialize + DeserializeOwned,
 {
+    // TODO: Somehow allow opening without caring what S is. Handy for rebuilding or
+    // collecting stats.
     pub fn from_file(file: impl AsRef<Path>) -> heap::Result<Self> {
         let db = HeapBuilder::new().from_file(file)?;
         Ok(Self::new(db))
@@ -235,10 +237,11 @@ where
         Ok(())
     }
 
-    // TODO: use this in a imgdup-edit or something
-    pub fn rebuild(&mut self) -> heap::Result<()> {
+    pub fn rebuild(&mut self) -> heap::Result<(usize, usize)> {
+        let mut dead = 0;
+        let mut alive = 0;
         if self.root().is_null() {
-            return Ok(());
+            return Ok((alive, dead));
         }
 
         // NOTE: make sure everything is on disk to make a reversal possible, in case
@@ -253,6 +256,7 @@ where
             stack.extend(cur_node.children.drain().map(|(_, child_ref)| child_ref));
 
             if cur_node.value.is_some() {
+                alive += 1;
                 let hash = cur_node.hash;
                 let root = self.root();
                 if root.is_null() {
@@ -261,13 +265,14 @@ where
                     self.add_internal(root, hash, |_, _| Ok(cur_ref))?;
                 }
             } else {
+                dead += 1;
                 self.db.remove(cur_ref)?;
             }
         }
 
         self.db.checkpoint()?;
 
-        Ok(())
+        Ok((alive, dead))
     }
 }
 

@@ -89,6 +89,7 @@ pub fn init_logger_and_eyre() -> eyre::Result<()> {
         log_color,
     )];
 
+    // TODO: a way to disable per application? Create a unique one for each?
     const LOGFILE: &str = "/tmp/imgdup.log";
     let logfile_failed = match File::create(LOGFILE) {
         Ok(f) => {

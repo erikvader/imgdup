@@ -6,3 +6,5 @@
 *.wmv
 *.MOV
 *.avi
+imgdup.db
+_*_

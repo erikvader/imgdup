@@ -11,8 +11,8 @@ type Uuid = i64;
 const UUID_FIRST: Uuid = 0;
 const UUID_NULL: Uuid = Uuid::min_value();
 
-pub const DEFAULT_CACHE_CAPACITY: usize = 4096;
-pub const DEFAULT_DIRTYNESS_LIMIT: usize = usize::MAX;
+pub const DEFAULT_CACHE_CAPACITY: usize = 65536;
+pub const DEFAULT_DIRTYNESS_LIMIT: usize = DEFAULT_CACHE_CAPACITY / 2;
 pub const DEFAULT_MAXIMUM_BLOCK_SIZE: usize = 100;
 
 const META_NEXT_ID: &str = "next_id";
@@ -123,6 +123,7 @@ where
     T: Serialize + DeserializeOwned,
     M: Serialize + DeserializeOwned + Default,
 {
+    // TODO: Read some value from the DB to determine if it is of type T
     fn new(sql: Sql, config: Config) -> Result<Self> {
         let next_id = sql.get_meta::<Uuid>(META_NEXT_ID)?.unwrap_or(UUID_FIRST);
         let user_meta = sql.get_meta::<M>(META_USER)?.unwrap_or_default();
@@ -282,6 +283,7 @@ where
     }
 
     pub fn flush(&mut self) -> Result<()> {
+        log::debug!("Flushing...");
         self.sql.put_meta(META_NEXT_ID, self.next_id)?;
         self.sql.put_meta(META_USER, &self.user_meta)?;
 
@@ -309,6 +311,7 @@ where
         });
         self.dirty_changes = 0;
 
+        log::debug!("Flush done");
         Ok(())
     }
 

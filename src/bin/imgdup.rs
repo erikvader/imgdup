@@ -111,7 +111,7 @@ fn main() -> eyre::Result<()> {
     let mut tree =
         BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
             format!(
-                "Failed to open database at: {}",
+                "failed to open database at: {}",
                 cli.database_file.display()
             )
         })?;
