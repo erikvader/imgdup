@@ -12,7 +12,7 @@ const UUID_FIRST: Uuid = 0;
 const UUID_NULL: Uuid = Uuid::min_value();
 
 pub const DEFAULT_CACHE_CAPACITY: usize = 65536;
-pub const DEFAULT_DIRTYNESS_LIMIT: usize = DEFAULT_CACHE_CAPACITY / 2;
+pub const DEFAULT_DIRTYNESS_LIMIT: usize = (4 * DEFAULT_CACHE_CAPACITY) / 5;
 pub const DEFAULT_MAXIMUM_BLOCK_SIZE: usize = 100;
 
 const META_NEXT_ID: &str = "next_id";
