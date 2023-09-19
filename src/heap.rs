@@ -539,7 +539,7 @@ mod test {
 // NOTE: This is here to be an easy way to calculate an estimate of the total memory
 // usage of a full cache
 fn estimate_cache_mem_usage() {
-    use crate::common::VidSrc;
+    use crate::common::tree_src_types::VidSrc;
     use std::mem::size_of;
 
     let cache_entry = size_of::<(Uuid, Block<VidSrc>)>();

@@ -14,14 +14,18 @@ use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
-    common::{init_eyre, init_logger, Mirror, VidSrc},
+    common::{
+        hash_images::{read_ignored, HashCli, HashConf},
+        init_eyre, init_logger,
+        tree_src_types::{Mirror, VidSrc},
+    },
     frame_extractor::{timestamp::Timestamp, FrameExtractor},
     fsutils::{all_files, is_simple_relative, read_optional_file},
     imghash::{
         self,
         hamming::{Distance, Hamming},
     },
-    imgutils::{self, RemoveBordersConf},
+    imgutils,
     repo::{LazyEntry, Repo},
     work_queue::WorkQueue,
 };
@@ -30,17 +34,8 @@ use imgdup::{
 #[command()]
 /// Finds duplicate videos
 struct Cli {
-    /// All gray values below this becomes black
-    #[arg(long, default_value_t = imgutils::DEFAULT_MASKIFY_THRESHOLD)]
-    maskify_threshold: u8,
-
-    /// A mask line can contain this many percent of white and still be considered black
-    #[arg(long, default_value_t = imgutils::DEFAULT_BORDER_MAX_WHITES)]
-    maximum_whites: f64,
-
-    /// Maximum distance for two images to be considered equal
-    #[arg(long, default_value_t = imghash::DEFAULT_SIMILARITY_THRESHOLD)]
-    similarity_threshold: Distance,
+    #[command(flatten)]
+    hash_args: HashCli,
 
     /// Use this many threads reading video files
     #[arg(long, short = 'j', default_value = "1")]
@@ -149,17 +144,11 @@ fn main() -> eyre::Result<()> {
     log::info!("Removing {} removed files from the DB", removed_files.len());
     tree.remove_any_of(|vidsrc| removed_files.contains(vidsrc.path()))?;
 
-    let video_conf = VideoWorkerConf::default()
-        .similarity_threshold(cli.similarity_threshold)
-        .border_conf(
-            RemoveBordersConf::default()
-                .maskify_threshold(cli.maskify_threshold)
-                .maximum_whites(cli.maximum_whites),
-        );
+    let hash_conf = cli.hash_args.as_conf();
 
     let ignored_hashes = if let Some(ignore_dir) = cli.ignore_dir {
         log::info!("Reading images to ignore from: {}", ignore_dir.display());
-        read_ignored(ignore_dir, &video_conf)?
+        read_ignored(ignore_dir, &hash_conf)?
     } else {
         vec![]
     };
@@ -189,7 +178,7 @@ fn main() -> eyre::Result<()> {
                         video_worker(
                             tx,
                             &work_queue,
-                            &video_conf,
+                            &hash_conf,
                             &ignored_hashes,
                             repo_grave.as_ref(),
                         )
@@ -201,7 +190,7 @@ fn main() -> eyre::Result<()> {
             let tree_thread = thread::Builder::new()
                 .name(format!("Tree"))
                 .spawn_scoped(s, || {
-                    tree_worker(rx, tree, repo_dup, cli.similarity_threshold)
+                    tree_worker(rx, tree, repo_dup, hash_conf.similarity_threshold)
                 })
                 .expect("failed to spawn thread");
             handles.push(("tree".to_string(), tree_thread));
@@ -227,36 +216,10 @@ struct Payload<'env> {
     hashes: Vec<(Timestamp, Hamming, Mirror)>,
 }
 
-struct VideoWorkerConf {
-    border_conf: RemoveBordersConf,
-    similarity_threshold: Distance,
-}
-
-impl Default for VideoWorkerConf {
-    fn default() -> Self {
-        Self {
-            border_conf: RemoveBordersConf::default(),
-            similarity_threshold: imghash::DEFAULT_SIMILARITY_THRESHOLD,
-        }
-    }
-}
-
-impl VideoWorkerConf {
-    pub fn similarity_threshold(mut self, threshold: Distance) -> Self {
-        self.similarity_threshold = threshold;
-        self
-    }
-
-    pub fn border_conf(mut self, conf: RemoveBordersConf) -> Self {
-        self.border_conf = conf;
-        self
-    }
-}
-
 fn video_worker<'env>(
     tx: mpsc::SyncSender<Payload<'env>>,
     videos: &WorkQueue<&'env Path>,
-    config: &VideoWorkerConf,
+    config: &HashConf,
     ignored_hashes: &[Hamming],
     repo_graveyard: Option<&Mutex<Repo>>,
 ) -> eyre::Result<()> {
@@ -296,7 +259,7 @@ fn video_worker<'env>(
 fn get_hashes(
     video: &Path,
     ignored_hashes: &[Hamming],
-    config: &VideoWorkerConf,
+    config: &HashConf,
     repo_graveyard: Option<&Mutex<Repo>>,
 ) -> eyre::Result<Vec<(Timestamp, Hamming, Mirror)>> {
     log::info!("Retrieving hashes for: {}", video.display());
@@ -385,7 +348,7 @@ impl FrameToHashResult {
 fn frame_to_hash(
     frame: &RgbImage,
     ignored_hashes: &[Hamming],
-    config: &VideoWorkerConf,
+    config: &HashConf,
     last_hash: Option<Hamming>,
 ) -> FrameToHashResult {
     let frame = imgutils::remove_borders(&frame, &config.border_conf);
@@ -422,64 +385,6 @@ fn calc_step(
 
 fn estimated_num_of_frames(video_length: Duration, step: Duration) -> usize {
     (video_length.as_secs_f64() / step.as_secs_f64()).ceil() as usize
-}
-
-fn read_ignored(
-    dir: impl AsRef<Path>,
-    conf: &VideoWorkerConf,
-) -> eyre::Result<Vec<Hamming>> {
-    let all_files: Vec<_> = all_files([dir]).wrap_err("failed to read dir")?;
-    let mut hashes = Vec::with_capacity(all_files.len());
-    let mut hashes_path = Vec::with_capacity(all_files.len());
-    let mut hashes_mirrored: Vec<bool> = Vec::with_capacity(all_files.len());
-
-    for file in all_files.iter() {
-        let mut img = image::open(&file)
-            .wrap_err_with(|| format!("could not open {} as an image", file.display()))?
-            .to_rgb8();
-
-        for mirrored in [false, true] {
-            if mirrored {
-                img = imgutils::mirror(img);
-            }
-
-            let img = imgutils::remove_borders(&img, &conf.border_conf);
-            if imgutils::is_subimg_empty(&img) {
-                log::warn!(
-                    "The ignored file '{}' is empty after border removal (mirror={mirrored})",
-                    file.display()
-                );
-                continue;
-            }
-
-            let hash = imghash::hash_sub(&img);
-            let the_same: Vec<_> = hashes
-                .iter()
-                .enumerate()
-                .filter(|(_, ignore)| {
-                    hash.distance_to(**ignore) <= conf.similarity_threshold
-                })
-                .filter(|(i, _)| !hashes_mirrored[*i])
-                .map(|(i, _)| &hashes_path[i])
-                .filter(|coll_path| coll_path != &&file)
-                .collect();
-
-            if !the_same.is_empty() {
-                log::warn!(
-                    "The ignored file '{}' (mirrored={mirrored}) is the same as: {:?}",
-                    file.display(),
-                    the_same,
-                );
-                continue;
-            }
-
-            hashes.push(hash);
-            hashes_path.push(file);
-            hashes_mirrored.push(mirrored);
-        }
-    }
-
-    Ok(hashes)
 }
 
 // TODO: handle ctrl+c and properly close the db

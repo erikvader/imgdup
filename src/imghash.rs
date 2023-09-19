@@ -2,11 +2,9 @@ use std::sync::OnceLock;
 
 use image::{GenericImageView, Pixel, SubImage};
 
-use self::hamming::{Distance, Hamming};
+use self::hamming::Hamming;
 
 pub mod hamming;
-
-pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 23;
 
 static HASHER: OnceLock<Hasher> = OnceLock::new();
 

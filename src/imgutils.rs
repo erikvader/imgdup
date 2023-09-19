@@ -1,3 +1,4 @@
+use clap::Args;
 use image::imageops::{self, crop_imm, flip_horizontal_in_place, FilterType};
 use image::math::Rect;
 use image::{GenericImageView, GrayImage, ImageBuffer, Pixel, RgbImage, SubImage};
@@ -10,10 +11,21 @@ pub const BLACK: u8 = u8::MIN;
 pub const DEFAULT_MASKIFY_THRESHOLD: u8 = 40;
 pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.03;
 
+#[derive(Args, Debug)]
+pub struct RemoveBordersCli {
+    /// All gray values below this becomes black
+    #[arg(long, default_value_t = DEFAULT_MASKIFY_THRESHOLD)]
+    maskify_threshold: u8,
+
+    /// A mask line can contain this many percent of white and still be considered black
+    #[arg(long, default_value_t = DEFAULT_BORDER_MAX_WHITES)]
+    maximum_whites: f64,
+}
+
 #[derive(Copy, Clone)]
 pub struct RemoveBordersConf {
-    maskify_threshold: u8,
-    maximum_whites: f64,
+    pub maskify_threshold: u8,
+    pub maximum_whites: f64,
 }
 
 impl Default for RemoveBordersConf {
@@ -34,6 +46,14 @@ impl RemoveBordersConf {
     pub fn maximum_whites(mut self, max: f64) -> Self {
         self.maximum_whites = max;
         self
+    }
+}
+
+impl RemoveBordersCli {
+    pub fn as_conf(&self) -> RemoveBordersConf {
+        RemoveBordersConf::default()
+            .maskify_threshold(self.maskify_threshold)
+            .maximum_whites(self.maximum_whites)
     }
 }
 

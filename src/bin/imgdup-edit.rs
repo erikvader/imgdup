@@ -1,10 +1,14 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup::{
     bktree::BKTree,
-    common::{init_eyre, init_logger, VidSrc},
+    common::{
+        hash_images::{HashCli, HashConf},
+        init_eyre, init_logger,
+        tree_src_types::VidSrc,
+    },
 };
 
 #[derive(Parser, Debug)]
@@ -15,6 +19,9 @@ struct Cli {
     #[arg(long, short = 'f')]
     database_file: PathBuf,
 
+    #[command(flatten)]
+    hash_args: HashCli,
+
     /// Goals to execute
     #[arg(value_parser = goal_parser, required = true)]
     goals: Vec<Goal>,
@@ -24,7 +31,7 @@ struct Cli {
 enum Goal {
     Stats,
     Rebuild,
-    Cleanse { dir: PathBuf },
+    Purge { dir: PathBuf },
 }
 
 fn goal_parser(s: &str) -> Result<Goal, String> {
@@ -32,7 +39,7 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
     match &parts[..] {
         &["stats"] => Ok(Goal::Stats),
         &["rebuild"] => Ok(Goal::Rebuild),
-        &["cleanse", arg1] => Ok(Goal::Cleanse { dir: arg1.into() }),
+        &["purge", arg1] => Ok(Goal::Purge { dir: arg1.into() }),
         _ => Err(format!("Failed to parse goal '{s}', unrecognized")),
     }
 }
@@ -50,12 +57,14 @@ fn main() -> eyre::Result<()> {
             )
         })?;
 
+    let hash_conf = cli.hash_args.as_conf();
+
     for goal in cli.goals {
         log::info!("Performing goal: {goal:?}");
         match goal {
             Goal::Stats => goal_stats(&mut tree),
             Goal::Rebuild => goal_rebuild(&mut tree),
-            Goal::Cleanse { dir } => todo!(),
+            Goal::Purge { ref dir } => goal_purge(&mut tree, &dir, &hash_conf),
         }
         .wrap_err_with(|| format!("failed to perform goal '{goal:?}'"))?;
         log::info!("Done with goal: {goal:?}");
@@ -83,5 +92,15 @@ fn goal_rebuild(tree: &mut BKTree<VidSrc>) -> eyre::Result<()> {
     log::info!("  Alive nodes = {alive}");
     log::info!("  Dead  nodes = {dead}");
     log::info!("  Total nodes = {total}");
+    Ok(())
+}
+
+fn goal_purge(
+    tree: &mut BKTree<VidSrc>,
+    dir: &Path,
+    hash_conf: &HashConf,
+) -> eyre::Result<()> {
+    // TODO: read all hashes from `dir` and remove them from `tree`
+    todo!()
     Ok(())
 }

@@ -8,13 +8,10 @@ use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
     bktree::BKTree,
-    common::{init_eyre, init_logger, VidSrc},
+    common::{hash_images, init_eyre, init_logger, tree_src_types::VidSrc},
     frame_extractor::FrameExtractor,
     fsutils::{is_simple_relative, remove_dot_dot},
-    imghash::{
-        self,
-        hamming::{Distance, Hamming},
-    },
+    imghash::hamming::{Distance, Hamming},
     repo::Entry,
 };
 
@@ -23,7 +20,7 @@ use imgdup::{
 /// Dump debug information on a dup
 struct Cli {
     /// Maximum distance for two images to be considered equal
-    #[arg(long, default_value_t = imghash::DEFAULT_SIMILARITY_THRESHOLD)]
+    #[arg(long, default_value_t = hash_images::DEFAULT_SIMILARITY_THRESHOLD)]
     similarity_threshold: Distance,
 
     /// Path to the database to use
