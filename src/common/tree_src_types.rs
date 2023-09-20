@@ -26,6 +26,21 @@ impl fmt::Display for Mirror {
     }
 }
 
+impl fmt::Display for VidSrc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?}:{}:{}",
+            self.path,
+            self.frame_pos,
+            match self.mirrored {
+                Mirror::Normal => "N",
+                Mirror::Mirrored => "M",
+            },
+        )
+    }
+}
+
 impl VidSrc {
     pub fn new(frame_pos: Timestamp, path: PathBuf, mirrored: Mirror) -> Self {
         assert!(is_simple_relative(&path));

@@ -10,6 +10,8 @@ use crate::{
 #[derive(Serialize, Deserialize)]
 struct Meta {
     root: Ref,
+    // TODO: save some identifier for S
+    // TODO: a list of leaders
 }
 
 impl Default for Meta {
@@ -77,6 +79,7 @@ where
         Ok((alive, dead))
     }
 
+    // TODO: this is just add_all with a list of size 1
     pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
         if self.root().is_null() {
             let root = self.db.allocate(BKNode::new(hash, value))?;
@@ -184,10 +187,14 @@ where
 
     pub fn remove_any_of<P>(&mut self, mut predicate: P) -> heap::Result<()>
     where
-        P: FnMut(&S) -> bool,
+        P: FnMut(Hamming, &S) -> bool,
     {
         self.for_each_internal(
-            |_, node| node.value.as_ref().is_some_and(|value| predicate(value)),
+            |_, node| {
+                node.value
+                    .as_ref()
+                    .is_some_and(|value| predicate(node.hash, value))
+            },
             |_, node| node.value = None,
         )?;
         self.db.checkpoint()?;
@@ -342,7 +349,7 @@ mod test {
         tree.add(Hamming(0b100), value("4"))?;
 
         let rem: HashSet<PathBuf> = HashSet::from(["5_1".into()]);
-        tree.remove_any_of(|p| rem.contains(p))?;
+        tree.remove_any_of(|_, p| rem.contains(p))?;
 
         let all = contents(&mut tree)?;
 

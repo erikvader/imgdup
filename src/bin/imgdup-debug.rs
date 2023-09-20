@@ -79,7 +79,10 @@ fn main() -> eyre::Result<()> {
 
     tree.close()?;
 
-    log::info!("Extracting the frames for all collisions...");
+    log::info!(
+        "Extracting the frames for all {} collisions...",
+        collisions.len()
+    );
     let images: HashMap<VidSrc, RgbImage> = read_images_from_videos(&collisions, root)?;
     log::info!("Done!");
 

@@ -142,7 +142,7 @@ fn main() -> eyre::Result<()> {
         .collect();
 
     log::info!("Removing {} removed files from the DB", removed_files.len());
-    tree.remove_any_of(|vidsrc| removed_files.contains(vidsrc.path()))?;
+    tree.remove_any_of(|_, vidsrc| removed_files.contains(vidsrc.path()))?;
 
     let hash_conf = cli.hash_args.as_conf();
 
