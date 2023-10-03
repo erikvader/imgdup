@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 use std::{io::Write, path::Path};
 
-// TODO: https://github.com/meilisearch/heed ??
-// TODO: https://github.com/seladb/pickledb-rs ??
-
 use super::Result;
 use const_format::concatcp;
 use rusqlite::{blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql};
@@ -215,14 +212,14 @@ mod test {
     #[test]
     fn test_meta() -> Result<()> {
         let sql = Sql::new_in_memory()?;
-        sql.put_meta("asd", 42)?;
-        assert_eq!(42, sql.get_meta("asd")?.unwrap());
+        sql.put_meta("asd", 42i32)?;
+        assert_eq!(42i32, sql.get_meta::<i32>("asd")?.unwrap());
 
-        sql.put_meta("omg", 3)?;
-        sql.put_meta("asd", 69)?;
+        sql.put_meta("omg", 3i32)?;
+        sql.put_meta("asd", 69i32)?;
 
-        assert_eq!(3, sql.get_meta("omg")?.unwrap());
-        assert_eq!(69, sql.get_meta("asd")?.unwrap());
+        assert_eq!(3i32, sql.get_meta::<i32>("omg")?.unwrap());
+        assert_eq!(69i32, sql.get_meta::<i32>("asd")?.unwrap());
 
         assert!(sql.remove_meta("omg")?);
         assert_eq!(None::<i32>, sql.get_meta("omg")?);
