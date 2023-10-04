@@ -261,11 +261,25 @@ mod test {
     }
 
     #[test]
+    fn add_empty() -> Result<()> {
+        let tmpf = tempfile()?;
+        let mut arr = FileArray::new_opened(tmpf)?;
+        let len_before = arr.len();
+        let mmap_len_before = arr.mmap.len();
+        arr.add([] as [&i32; 0])?;
+        assert_eq!(len_before, arr.len());
+        assert_eq!(mmap_len_before, arr.mmap.len());
+        Ok(())
+    }
+
+    #[test]
     fn basic_add() -> Result<()> {
         let tmpf = tempfile()?;
         let mut arr = FileArray::new_opened(tmpf)?;
 
+        let mmap_len_before = arr.mmap.len();
         assert_eq!(HEADER_SIZE as u64, arr.len());
+
         assert!(matches!(
             arr.get::<i32>(1000u64.into()),
             Err(Error::RefOutsideRange)
@@ -278,6 +292,8 @@ mod test {
 
         let first_ref = arr.add_one(&123i32)?;
         assert!(arr.len() > HEADER_SIZE as u64);
+        assert!(arr.mmap.len() > mmap_len_before);
+
         let first = arr.get::<i32>(first_ref)?;
         assert_eq!(&123, first);
         assert_eq!(first_ref, FileArray::ref_to_first::<i32>());
