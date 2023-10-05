@@ -28,15 +28,15 @@ pub type FileArraySerializer<'a> = WriteSerializer<BufWriter<&'a mut File>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Archive)]
 #[archive_attr(derive(CheckBytes))]
-pub struct Ref(pub u64);
+pub struct Ref(usize);
 
 impl Ref {
-    pub fn as_u64(self) -> u64 {
+    pub fn as_usize(self) -> usize {
         self.0
     }
 
-    pub fn as_usize(self) -> usize {
-        self.0.try_into().expect("should never fail on 64 bit")
+    fn as_u64(self) -> u64 {
+        self.0.try_into().expect("expecting 64 bit arch")
     }
 
     pub fn null() -> Self {
@@ -48,31 +48,27 @@ impl Ref {
     }
 }
 
-impl From<u64> for Ref {
-    fn from(value: u64) -> Self {
+impl From<usize> for Ref {
+    fn from(value: usize) -> Self {
         Self(value)
     }
 }
 
-impl From<usize> for Ref {
-    fn from(value: usize) -> Self {
-        Self(
-            value
-                .try_into()
-                .expect("shouldn't fail unless on a >64 bit system"),
-        )
-    }
-}
-
-impl From<Ref> for u64 {
-    fn from(value: Ref) -> Self {
-        value.as_u64()
+impl From<u64> for Ref {
+    fn from(value: u64) -> Self {
+        Self(value.try_into().expect("expecting 64 bit arch"))
     }
 }
 
 impl From<Ref> for usize {
     fn from(value: Ref) -> Self {
         value.as_usize()
+    }
+}
+
+impl From<Ref> for u64 {
+    fn from(value: Ref) -> Self {
+        value.as_u64()
     }
 }
 
@@ -88,7 +84,7 @@ impl ArchivedRef {
     }
 
     pub fn set(self: Pin<&mut Self>, new_ref: Ref) {
-        *self.as_mut_u64() = new_ref.0;
+        *self.as_mut_u64() = new_ref.as_u64();
     }
 
     pub fn to_ref(&self) -> Ref {
@@ -96,7 +92,7 @@ impl ArchivedRef {
     }
 }
 
-type HEADER = u64;
+type HEADER = usize;
 const HEADER_SIZE: usize = std::mem::size_of::<HEADER>();
 
 pub struct FileArray {
@@ -106,7 +102,7 @@ pub struct FileArray {
 
 /// A file backed memory area. New values can be appended, but not removed. Zero-copy
 /// deserialization using rkyv. Is not platform-independent since the stored values need
-/// to be aligned for the current platform.
+/// to be aligned for the current platform, and `usize` is different sizes.
 impl FileArray {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         // TODO: flock using fs2?
@@ -117,8 +113,7 @@ impl FileArray {
     fn new_opened(mut file: File) -> Result<Self> {
         let file_len = file.seek(SeekFrom::End(0))?;
         if file_len == 0 {
-            let empty_size: u64 = HEADER_SIZE.try_into().expect("should fit");
-            WriteSerializer::new(&mut file).serialize_value(&empty_size)?;
+            WriteSerializer::new(&mut file).serialize_value(&HEADER_SIZE)?;
         }
 
         // TODO: how to handle the signal that gets sent when the mapped file becomes
@@ -131,27 +126,33 @@ impl FileArray {
         assert!(len >= HEADER_SIZE);
 
         let mut fa = Self { file, mmap };
-        fa.file.seek(SeekFrom::Start(fa.len()))?;
+        fa.file.seek(SeekFrom::Start(
+            fa.len().try_into().expect("expecting 64 bit arch"),
+        ))?;
         Ok(fa)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() <= HEADER_SIZE.try_into().expect("should fit")
+        self.len() <= HEADER_SIZE
     }
 
-    fn len(&self) -> u64 {
+    pub fn len(&self) -> usize {
         // TODO: just use a pointer?
-        *self
+        self
             // TODO: use unsafe variants without checkbytes
             .get::<HEADER>(HEADER_SIZE.into())
             .expect("should always exist")
+            .to_owned()
+            .try_into()
+            .expect("expecting 64 bit arch")
     }
 
-    fn set_len(&mut self, new_len: u64) {
+    fn set_len(&mut self, new_len: usize) {
         *self
             // TODO: use unsafe variants without checkbytes
             .get_mut::<HEADER>(HEADER_SIZE.into())
-            .expect("should always exist") = new_len;
+            .expect("should always exist") =
+            new_len.try_into().expect("expecting 64 bit");
     }
 
     pub fn ref_to_first<T>() -> Ref {
@@ -162,14 +163,30 @@ impl FileArray {
         (pos + align_diff + std::mem::size_of::<T>()).into()
     }
 
+    pub fn reserve(&mut self, additional: usize) -> Result<()> {
+        let new_len = self.len() + additional;
+        self.file
+            .set_len(new_len.try_into().expect("expecting 64 bit arch"))?;
+
+        unsafe {
+            // TODO: are the advices preserved?
+            self.mmap
+                .remap(new_len, memmap2::RemapOptions::new().may_move(true))?;
+        }
+
+        Ok(())
+    }
+
     pub fn add<'i, It, S>(&mut self, items: It) -> Result<Vec<Ref>>
     where
         It: IntoIterator<Item = &'i S>,
         S: for<'s> Serialize<FileArraySerializer<'s>> + 'i,
     {
-        let mut len = self.len();
-        let buf = BufWriter::new(&mut self.file);
-        let mut ser = WriteSerializer::with_pos(buf, len.try_into().expect("should fit"));
+        let mut ser = {
+            let len = self.len();
+            let buf = BufWriter::new(&mut self.file);
+            WriteSerializer::with_pos(buf, len)
+        };
 
         let mut refs: Vec<Ref> = Vec::new();
 
@@ -181,22 +198,12 @@ impl FileArray {
 
         ser.into_inner().flush()?;
         if let Some(&last_ref) = refs.last() {
-            len = last_ref.into();
-            self.set_len(len);
+            self.set_len(last_ref.into());
         }
 
-        if len > self.mmap.len().try_into().expect("should fit") {
-            const GROWTH: u64 = 1 << 13;
-            len += GROWTH;
-            self.file.set_len(len)?;
-
-            unsafe {
-                // TODO: are the advices preserved?
-                self.mmap.remap(
-                    len.try_into().expect("should fit"),
-                    memmap2::RemapOptions::new().may_move(true),
-                )?;
-            }
+        if self.len() > self.mmap.len() {
+            const GROWTH: usize = 1 << 13;
+            self.reserve(GROWTH)?;
         }
 
         Ok(refs)
@@ -278,7 +285,7 @@ mod test {
         let mut arr = FileArray::new_opened(tmpf)?;
 
         let mmap_len_before = arr.mmap.len();
-        assert_eq!(HEADER_SIZE as u64, arr.len());
+        assert_eq!(HEADER_SIZE, arr.len());
 
         assert!(matches!(
             arr.get::<i32>(1000u64.into()),
@@ -291,13 +298,13 @@ mod test {
         assert!(matches!(arr.get::<()>(0u64.into()), Ok(_)));
 
         let first_ref = arr.add_one(&123i32)?;
-        assert!(arr.len() > HEADER_SIZE as u64);
+        assert!(arr.len() > HEADER_SIZE);
         assert!(arr.mmap.len() > mmap_len_before);
 
         let first = arr.get::<i32>(first_ref)?;
         assert_eq!(&123, first);
         assert_eq!(first_ref, FileArray::ref_to_first::<i32>());
-        assert_eq!(first_ref.as_u64(), arr.len());
+        assert_eq!(first_ref.as_usize(), arr.len());
 
         Ok(())
     }
@@ -322,7 +329,7 @@ mod test {
         let arr = FileArray::new_opened(tmpf2)?;
         let my_stuff = arr.get::<MyStuff>(ele_ref)?;
         assert_eq!(1, my_stuff.a);
-        assert_eq!(ele_ref.as_u64(), arr.len());
+        assert_eq!(ele_ref.as_usize(), arr.len());
 
         Ok(())
     }
@@ -336,7 +343,7 @@ mod test {
         assert_eq!(&1, arr.get::<i32>(refs[0])?);
         assert_eq!(&10, arr.get::<i32>(refs[1])?);
         assert_eq!(&100, arr.get::<i32>(refs[2])?);
-        assert_eq!(refs.last().unwrap().as_u64(), arr.len());
+        assert_eq!(refs.last().unwrap().as_usize(), arr.len());
 
         Ok(())
     }
@@ -358,8 +365,8 @@ mod test {
 
         tmpf3.seek(SeekFrom::Start(0))?;
         let arr = FileArray::new_opened(tmpf3)?;
-        assert_eq!(arr.len(), ref_2.as_u64());
-        assert!(arr.len() <= arr.mmap.len() as u64);
+        assert_eq!(arr.len(), ref_2.as_usize());
+        assert!(arr.len() <= arr.mmap.len());
         assert_eq!(&1u32, arr.get::<u32>(ref_1)?);
         assert_eq!(&2i64, arr.get::<i64>(ref_2)?);
         assert_eq!(ref_1, FileArray::ref_to_first::<u32>());
@@ -371,6 +378,7 @@ mod test {
     #[cfg(target_arch = "x86_64")]
     fn alignment_x86_64() {
         assert_eq!(Ref(16), FileArray::ref_to_first::<u64>());
+        assert_eq!(Ref(16), FileArray::ref_to_first::<usize>());
         assert_eq!(Ref(9), FileArray::ref_to_first::<u8>());
         assert_eq!(Ref(24), FileArray::ref_to_first::<u128>());
         assert_eq!(Ref(40), FileArray::ref_to_first::<MyStuff>());
