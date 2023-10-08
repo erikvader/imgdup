@@ -136,6 +136,21 @@ impl FileArray {
         self.len() <= HEADER_SIZE
     }
 
+    pub fn copy_to<W>(&mut self, mut writer: W) -> Result<()>
+    where
+        W: Write,
+    {
+        let res = || -> Result<()> {
+            self.file.seek(SeekFrom::Start(0))?;
+            let mut buf = BufReader::new(&self.file);
+            std::io::copy(&mut buf, &mut writer)?;
+            Ok(())
+        }();
+
+        self.file.seek(SeekFrom::End(0))?;
+        res
+    }
+
     pub fn len(&self) -> usize {
         // TODO: just use a pointer?
         self
@@ -382,5 +397,22 @@ mod test {
         assert_eq!(Ref(9), FileArray::ref_to_first::<u8>());
         assert_eq!(Ref(24), FileArray::ref_to_first::<u128>());
         assert_eq!(Ref(40), FileArray::ref_to_first::<MyStuff>());
+    }
+
+    #[test]
+    fn copy_to_writer() -> Result<()> {
+        let tmpf = tempfile()?;
+        let mut arr = FileArray::new_opened(tmpf)?;
+        arr.add_one(&123u8)?;
+
+        let mut buf = Vec::new();
+        arr.copy_to(&mut buf)?;
+
+        assert!(buf.len() >= HEADER_SIZE + std::mem::size_of::<u8>());
+
+        let pos = FileArray::ref_to_first::<u8>().as_usize();
+        assert_eq!(123u8, buf[pos - 1]);
+
+        Ok(())
     }
 }
