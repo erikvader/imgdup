@@ -1,12 +1,15 @@
 use std::{
     fs::{self, File},
-    io::{self, BufWriter, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
     path::Path,
     pin::Pin,
 };
 
 use memmap2::MmapMut;
-use rkyv::bytecheck;
+use rkyv::{
+    bytecheck,
+    ser::serializers::{AllocScratch, CompositeSerializer, FallbackScratch, HeapScratch},
+};
 use rkyv::{
     ser::{serializers::WriteSerializer, Serializer},
     validation::validators::DefaultValidator,
@@ -20,11 +23,14 @@ pub enum Error {
     #[error("ref outside of range")]
     RefOutsideRange,
     #[error("validation error: {0}")]
-    Validate(String),
+    Validate(String), // TODO: needed?
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-pub type FileArraySerializer<'a> = WriteSerializer<BufWriter<&'a mut File>>;
+pub type FileArraySerializer = CompositeSerializer<
+    WriteSerializer<BufWriter<File>>,
+    FallbackScratch<HeapScratch<4196>, AllocScratch>,
+>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Archive)]
 #[archive_attr(derive(CheckBytes))]
@@ -78,6 +84,12 @@ impl From<&ArchivedRef> for Ref {
     }
 }
 
+impl From<Ref> for ArchivedRef {
+    fn from(value: Ref) -> Self {
+        ArchivedRef(value.as_u64())
+    }
+}
+
 impl ArchivedRef {
     fn as_mut_u64(self: Pin<&mut Self>) -> &mut u64 {
         unsafe { &mut self.get_unchecked_mut().0 }
@@ -87,7 +99,7 @@ impl ArchivedRef {
         *self.as_mut_u64() = new_ref.as_u64();
     }
 
-    pub fn to_ref(&self) -> Ref {
+    pub fn to_unarchived(&self) -> Ref {
         self.into()
     }
 }
@@ -97,12 +109,12 @@ const HEADER_SIZE: usize = std::mem::size_of::<HEADER>();
 
 pub struct FileArray {
     mmap: MmapMut,
-    file: File,
+    seri: FileArraySerializer,
 }
 
 /// A file backed memory area. New values can be appended, but not removed. Zero-copy
 /// deserialization using rkyv. Is not platform-independent since the stored values need
-/// to be aligned for the current platform, and `usize` is different sizes.
+/// to be aligned for the current platform, endianess, and `usize` is different sizes.
 impl FileArray {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         // TODO: flock using fs2?
@@ -111,6 +123,7 @@ impl FileArray {
     }
 
     fn new_opened(mut file: File) -> Result<Self> {
+        // TODO: double check open options on the file. Read, write and not append
         let file_len = file.seek(SeekFrom::End(0))?;
         if file_len == 0 {
             WriteSerializer::new(&mut file).serialize_value(&HEADER_SIZE)?;
@@ -122,14 +135,20 @@ impl FileArray {
         mmap.advise(memmap2::Advice::Random)?;
         mmap.advise(memmap2::Advice::DontFork)?;
 
-        let len = mmap.len();
-        assert!(len >= HEADER_SIZE);
+        let total_len = mmap.len();
+        assert!(total_len >= HEADER_SIZE);
 
-        let mut fa = Self { file, mmap };
-        fa.file.seek(SeekFrom::Start(
-            fa.len().try_into().expect("expecting 64 bit arch"),
+        let used_len = Self::len_raw(&mmap);
+        file.seek(SeekFrom::Start(
+            used_len.try_into().expect("expecting 64 bit arch"),
         ))?;
-        Ok(fa)
+        let seri = CompositeSerializer::new(
+            WriteSerializer::with_pos(BufWriter::new(file), used_len),
+            FallbackScratch::default(),
+            rkyv::Infallible,
+        );
+
+        Ok(Self { mmap, seri })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -140,22 +159,29 @@ impl FileArray {
     where
         W: Write,
     {
-        let res = || -> Result<()> {
-            self.file.seek(SeekFrom::Start(0))?;
-            let mut buf = BufReader::new(&self.file);
-            std::io::copy(&mut buf, &mut writer)?;
-            Ok(())
-        }();
+        self.on_file(|mut file| -> Result<()> {
+            let original_pos = file.seek(SeekFrom::Current(0))?;
 
-        self.file.seek(SeekFrom::End(0))?;
-        res
+            let res = || -> Result<()> {
+                file.seek(SeekFrom::Start(0))?;
+                let mut buf = BufReader::new(&mut file);
+                std::io::copy(&mut buf, &mut writer)?;
+                Ok(())
+            }();
+
+            file.seek(SeekFrom::Start(original_pos))?;
+            res
+        })
     }
 
     pub fn len(&self) -> usize {
+        Self::len_raw(&self.mmap)
+    }
+
+    pub fn len_raw(slice: &[u8]) -> usize {
         // TODO: just use a pointer?
-        self
-            // TODO: use unsafe variants without checkbytes
-            .get::<HEADER>(HEADER_SIZE.into())
+        // TODO: use unsafe variants without checkbytes
+        Self::get_raw::<HEADER>(slice, HEADER_SIZE.into())
             .expect("should always exist")
             .to_owned()
             .try_into()
@@ -173,16 +199,47 @@ impl FileArray {
     pub fn ref_to_first<T>() -> Ref {
         let pos = HEADER_SIZE;
         let align = std::mem::align_of::<T>();
-        dbg!(align);
         let align_diff = (align - (pos % align)) % align;
         (pos + align_diff + std::mem::size_of::<T>()).into()
     }
 
+    fn on_file<F, R>(&mut self, appl: F) -> R
+    where
+        F: FnOnce(&mut File) -> R,
+    {
+        replace_with::replace_with_and_return(
+            &mut self.seri,
+            || {
+                // NOTE: just to replace it with anything to allow the panic to keep
+                // propagating
+                CompositeSerializer::new(
+                    WriteSerializer::new(BufWriter::new(
+                        File::open("/dev/null").expect("should exist"),
+                    )),
+                    FallbackScratch::default(),
+                    rkyv::Infallible,
+                )
+            },
+            |seri| {
+                let (write_seri, c, h) = seri.into_components();
+                let pos = write_seri.pos();
+                let mut bufwriter = write_seri.into_inner();
+
+                let res = appl(bufwriter.get_mut());
+
+                let write_seri = WriteSerializer::with_pos(bufwriter, pos);
+                let seri = CompositeSerializer::new(write_seri, c, h);
+
+                (res, seri)
+            },
+        )
+    }
+
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         let new_len = self.len() + additional;
-        self.file
-            .set_len(new_len.try_into().expect("expecting 64 bit arch"))?;
+        let new_len_u64: u64 = new_len.try_into().expect("expecting 64 bit arch");
 
+        self.on_file(|file| file.set_len(new_len_u64))?;
         unsafe {
             // TODO: are the advices preserved?
             self.mmap
@@ -195,23 +252,25 @@ impl FileArray {
     pub fn add<'i, It, S>(&mut self, items: It) -> Result<Vec<Ref>>
     where
         It: IntoIterator<Item = &'i S>,
-        S: for<'s> Serialize<FileArraySerializer<'s>> + 'i,
+        S: Serialize<FileArraySerializer> + 'i,
     {
-        let mut ser = {
-            let len = self.len();
-            let buf = BufWriter::new(&mut self.file);
-            WriteSerializer::with_pos(buf, len)
-        };
+        // TODO:
+        // let mut ser = {
+        //     let len = self.len();
+        //     // let buf = BufWriter::new(&mut self.file);
+        //     WriteSerializer::with_pos(todo!(), len)
+        // };
 
         let mut refs: Vec<Ref> = Vec::new();
 
         for item in items.into_iter() {
-            ser.align_for::<S>()?;
-            ser.serialize_value(item)?;
-            refs.push(ser.pos().into());
+            // ser.align_for::<S>()?;
+            // TODO:
+            // ser.serialize_value(item)?;
+            // refs.push(ser.pos().into());
         }
 
-        ser.into_inner().flush()?;
+        // ser.into_inner().flush()?;
         if let Some(&last_ref) = refs.last() {
             self.set_len(last_ref.into());
         }
@@ -226,7 +285,7 @@ impl FileArray {
 
     pub fn add_one<S>(&mut self, item: &S) -> Result<Ref>
     where
-        S: for<'a> Serialize<FileArraySerializer<'a>>,
+        S: Serialize<FileArraySerializer>,
     {
         self.add([item])
             .map(|vec| vec.into_iter().next().expect("should have exactly one"))
@@ -242,6 +301,14 @@ impl FileArray {
             .mmap
             .get(..key.as_usize())
             .ok_or(Error::RefOutsideRange)?;
+        Self::get_raw::<D>(slice, key)
+    }
+
+    fn get_raw<'a, D>(slice: &'a [u8], key: Ref) -> Result<&'a D::Archived>
+    where
+        D: Archive,
+        D::Archived: CheckBytes<DefaultValidator<'a>>,
+    {
         Ok(rkyv::check_archived_root::<D>(slice)
             .map_err(|e| Error::Validate(format!("{e}")))?)
     }

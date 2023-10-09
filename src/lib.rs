@@ -1,4 +1,5 @@
 pub mod bktree;
+pub mod bktree2;
 pub mod common;
 pub mod file_array;
 pub mod frame_extractor;

@@ -11,7 +11,10 @@ pub type Container = u128;
     Eq,
     Ord,
     PartialOrd,
+    rkyv::Serialize,
+    rkyv::Archive,
 )]
+#[archive(check_bytes)]
 pub struct Hamming(pub Container);
 
 impl Hamming {
@@ -47,6 +50,12 @@ impl Hamming {
 impl std::fmt::Display for Hamming {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.to_base64().fmt(f)
+    }
+}
+
+impl ArchivedHamming {
+    pub fn to_unarchived(&self) -> Hamming {
+        Hamming(self.0)
     }
 }
 
