@@ -8,7 +8,10 @@ use std::{
 use memmap2::MmapMut;
 use rkyv::{
     bytecheck,
-    ser::serializers::{AllocScratch, CompositeSerializer, FallbackScratch, HeapScratch},
+    ser::serializers::{
+        AllocScratch, AllocScratchError, CompositeSerializer, CompositeSerializerError,
+        FallbackScratch, HeapScratch,
+    },
 };
 use rkyv::{
     ser::{serializers::WriteSerializer, Serializer},
@@ -20,6 +23,11 @@ use rkyv::{
 pub enum Error {
     #[error("io: {0}")]
     Io(#[from] io::Error),
+    #[error("serializer: {0}")]
+    Serializer(
+        #[from]
+        CompositeSerializerError<io::Error, AllocScratchError, std::convert::Infallible>,
+    ),
     #[error("ref outside of range")]
     RefOutsideRange,
     #[error("validation error: {0}")]
@@ -29,7 +37,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 pub type FileArraySerializer = CompositeSerializer<
     WriteSerializer<BufWriter<File>>,
-    FallbackScratch<HeapScratch<4196>, AllocScratch>,
+    FallbackScratch<HeapScratch<8192>, AllocScratch>,
 >;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Archive)]
@@ -159,12 +167,12 @@ impl FileArray {
     where
         W: Write,
     {
-        self.on_file(|mut file| -> Result<()> {
+        self.on_file(|file| -> Result<()> {
             let original_pos = file.seek(SeekFrom::Current(0))?;
 
             let res = || -> Result<()> {
                 file.seek(SeekFrom::Start(0))?;
-                let mut buf = BufReader::new(&mut file);
+                let mut buf = BufReader::new(file.get_mut());
                 std::io::copy(&mut buf, &mut writer)?;
                 Ok(())
             }();
@@ -205,7 +213,7 @@ impl FileArray {
 
     fn on_file<F, R>(&mut self, appl: F) -> R
     where
-        F: FnOnce(&mut File) -> R,
+        F: FnOnce(&mut BufWriter<File>) -> R,
     {
         replace_with::replace_with_and_return(
             &mut self.seri,
@@ -225,7 +233,7 @@ impl FileArray {
                 let pos = write_seri.pos();
                 let mut bufwriter = write_seri.into_inner();
 
-                let res = appl(bufwriter.get_mut());
+                let res = appl(&mut bufwriter);
 
                 let write_seri = WriteSerializer::with_pos(bufwriter, pos);
                 let seri = CompositeSerializer::new(write_seri, c, h);
@@ -236,10 +244,14 @@ impl FileArray {
     }
 
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
-        let new_len = self.len() + additional;
+        self.reserve_internal(additional, self.mmap.len())
+    }
+
+    fn reserve_internal(&mut self, additional: usize, file_len: usize) -> Result<()> {
+        let new_len = file_len + additional;
         let new_len_u64: u64 = new_len.try_into().expect("expecting 64 bit arch");
 
-        self.on_file(|file| file.set_len(new_len_u64))?;
+        self.on_file(|file| file.get_mut().set_len(new_len_u64))?;
         unsafe {
             // TODO: are the advices preserved?
             self.mmap
@@ -254,30 +266,24 @@ impl FileArray {
         It: IntoIterator<Item = &'i S>,
         S: Serialize<FileArraySerializer> + 'i,
     {
-        // TODO:
-        // let mut ser = {
-        //     let len = self.len();
-        //     // let buf = BufWriter::new(&mut self.file);
-        //     WriteSerializer::with_pos(todo!(), len)
-        // };
-
         let mut refs: Vec<Ref> = Vec::new();
 
         for item in items.into_iter() {
-            // ser.align_for::<S>()?;
-            // TODO:
-            // ser.serialize_value(item)?;
-            // refs.push(ser.pos().into());
+            // TODO: make sure flush is always called if one of these fail?
+            self.seri.align_for::<S>()?;
+            self.seri.serialize_value(item)?;
+            refs.push(self.seri.pos().into());
         }
 
-        // ser.into_inner().flush()?;
+        self.on_file(|file| file.flush())?;
+
         if let Some(&last_ref) = refs.last() {
             self.set_len(last_ref.into());
         }
 
         if self.len() > self.mmap.len() {
             const GROWTH: usize = 1 << 13;
-            self.reserve(GROWTH)?;
+            self.reserve_internal(GROWTH, self.len())?;
         }
 
         Ok(refs)
@@ -297,11 +303,7 @@ impl FileArray {
         D: Archive,
         D::Archived: CheckBytes<DefaultValidator<'a>>,
     {
-        let slice = self
-            .mmap
-            .get(..key.as_usize())
-            .ok_or(Error::RefOutsideRange)?;
-        Self::get_raw::<D>(slice, key)
+        Self::get_raw::<D>(&self.mmap, key)
     }
 
     fn get_raw<'a, D>(slice: &'a [u8], key: Ref) -> Result<&'a D::Archived>
@@ -309,6 +311,7 @@ impl FileArray {
         D: Archive,
         D::Archived: CheckBytes<DefaultValidator<'a>>,
     {
+        let slice = slice.get(..key.as_usize()).ok_or(Error::RefOutsideRange)?;
         Ok(rkyv::check_archived_root::<D>(slice)
             .map_err(|e| Error::Validate(format!("{e}")))?)
     }
