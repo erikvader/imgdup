@@ -5,6 +5,7 @@ use std::{
     pin::Pin,
 };
 
+use derivative::Derivative;
 use memmap2::MmapMut;
 use rkyv::{
     bytecheck,
@@ -26,6 +27,7 @@ pub enum Error {
     #[error("serializer: {0}")]
     Serializer(
         #[from]
+        // TODO: why doesn't `<FileArraySerializer as Fallible>::Error` work?
         CompositeSerializerError<io::Error, AllocScratchError, std::convert::Infallible>,
     ),
     #[error("ref outside of range")]
@@ -40,75 +42,81 @@ pub type FileArraySerializer = CompositeSerializer<
     FallbackScratch<HeapScratch<8192>, AllocScratch>,
 >;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Archive)]
-#[archive_attr(derive(CheckBytes))]
-pub struct Ref(usize);
+#[derive(Derivative, CheckBytes)]
+#[derivative(
+    Debug(bound = ""),
+    Copy(bound = ""),
+    Clone(bound = ""),
+    PartialEq(bound = ""),
+    Eq(bound = "")
+)]
+#[repr(transparent)]
+pub struct Ref<T> {
+    offset: u64,
+    _t: std::marker::PhantomData<T>,
+}
 
-impl Ref {
+impl<T> rkyv::Archive for Ref<T> {
+    type Archived = Self;
+    type Resolver = ();
+
+    unsafe fn resolve(
+        &self,
+        _pos: usize,
+        _resolver: Self::Resolver,
+        out: *mut Self::Archived,
+    ) {
+        out.write(*self);
+    }
+}
+
+impl<S: rkyv::Fallible + ?Sized, T> rkyv::Serialize<S> for Ref<T> {
+    fn serialize(
+        &self,
+        _serializer: &mut S,
+    ) -> std::result::Result<Self::Resolver, <S as rkyv::Fallible>::Error> {
+        Ok(())
+    }
+}
+
+impl<T> Ref<T> {
     pub fn as_usize(self) -> usize {
-        self.0
+        self.offset.try_into().expect("expecting 64 bit arch")
     }
 
-    fn as_u64(self) -> u64 {
-        self.0.try_into().expect("expecting 64 bit arch")
+    pub fn as_u64(self) -> u64 {
+        self.offset
     }
 
     pub fn null() -> Self {
-        Self(0)
+        Self::new_u64(0)
     }
 
     pub fn is_null(self) -> bool {
-        self.0 == 0
+        self.offset == 0
+    }
+
+    fn new_u64(offset: u64) -> Self {
+        Self {
+            offset,
+            _t: std::marker::PhantomData,
+        }
+    }
+
+    fn new_usize(offset: usize) -> Self {
+        Self::new_u64(offset.try_into().expect("expecting 64 bit arch"))
     }
 }
 
-impl From<usize> for Ref {
-    fn from(value: usize) -> Self {
-        Self(value)
-    }
-}
-
-impl From<u64> for Ref {
-    fn from(value: u64) -> Self {
-        Self(value.try_into().expect("expecting 64 bit arch"))
-    }
-}
-
-impl From<Ref> for usize {
-    fn from(value: Ref) -> Self {
+impl<T> From<Ref<T>> for usize {
+    fn from(value: Ref<T>) -> Self {
         value.as_usize()
     }
 }
 
-impl From<Ref> for u64 {
-    fn from(value: Ref) -> Self {
+impl<T> From<Ref<T>> for u64 {
+    fn from(value: Ref<T>) -> Self {
         value.as_u64()
-    }
-}
-
-impl From<&ArchivedRef> for Ref {
-    fn from(value: &ArchivedRef) -> Self {
-        value.0.into()
-    }
-}
-
-impl From<Ref> for ArchivedRef {
-    fn from(value: Ref) -> Self {
-        ArchivedRef(value.as_u64())
-    }
-}
-
-impl ArchivedRef {
-    fn as_mut_u64(self: Pin<&mut Self>) -> &mut u64 {
-        unsafe { &mut self.get_unchecked_mut().0 }
-    }
-
-    pub fn set(self: Pin<&mut Self>, new_ref: Ref) {
-        *self.as_mut_u64() = new_ref.as_u64();
-    }
-
-    pub fn to_unarchived(&self) -> Ref {
-        self.into()
     }
 }
 
@@ -189,7 +197,7 @@ impl FileArray {
     pub fn len_raw(slice: &[u8]) -> usize {
         // TODO: just use a pointer?
         // TODO: use unsafe variants without checkbytes
-        Self::get_raw::<HEADER>(slice, HEADER_SIZE.into())
+        Self::get_raw::<HEADER>(slice, Ref::new_usize(HEADER_SIZE))
             .expect("should always exist")
             .to_owned()
             .try_into()
@@ -199,16 +207,17 @@ impl FileArray {
     fn set_len(&mut self, new_len: usize) {
         *self
             // TODO: use unsafe variants without checkbytes
-            .get_mut::<HEADER>(HEADER_SIZE.into())
+            .get_mut::<HEADER>(Ref::new_usize(HEADER_SIZE))
             .expect("should always exist") =
             new_len.try_into().expect("expecting 64 bit");
     }
 
-    pub fn ref_to_first<T>() -> Ref {
+    // TODO: should be marked as unsafe?
+    pub fn ref_to_first<T>() -> Ref<T> {
         let pos = HEADER_SIZE;
         let align = std::mem::align_of::<T>();
         let align_diff = (align - (pos % align)) % align;
-        (pos + align_diff + std::mem::size_of::<T>()).into()
+        Ref::new_usize(pos + align_diff + std::mem::size_of::<T>())
     }
 
     fn on_file<F, R>(&mut self, appl: F) -> R
@@ -261,18 +270,18 @@ impl FileArray {
         Ok(())
     }
 
-    pub fn add<'i, It, S>(&mut self, items: It) -> Result<Vec<Ref>>
+    pub fn add<'i, It, S>(&mut self, items: It) -> Result<Vec<Ref<S>>>
     where
         It: IntoIterator<Item = &'i S>,
         S: Serialize<FileArraySerializer> + 'i,
     {
-        let mut refs: Vec<Ref> = Vec::new();
+        let mut refs: Vec<Ref<S>> = Vec::new();
 
         for item in items.into_iter() {
             // TODO: make sure flush is always called if one of these fail?
             self.seri.align_for::<S>()?;
             self.seri.serialize_value(item)?;
-            refs.push(self.seri.pos().into());
+            refs.push(Ref::new_usize(self.seri.pos()));
         }
 
         self.on_file(|file| file.flush())?;
@@ -289,16 +298,17 @@ impl FileArray {
         Ok(refs)
     }
 
-    pub fn add_one<S>(&mut self, item: &S) -> Result<Ref>
+    pub fn add_one<S>(&mut self, item: &S) -> Result<Ref<S>>
     where
         S: Serialize<FileArraySerializer>,
     {
+        // TODO: write directly into the mmap using `BufferSerializer` or something?
         self.add([item])
             .map(|vec| vec.into_iter().next().expect("should have exactly one"))
     }
 
     // TODO: have unsafe getters as an alternative?
-    pub fn get<'a, D>(&'a self, key: Ref) -> Result<&'a D::Archived>
+    pub fn get<'a, D>(&'a self, key: Ref<D>) -> Result<&'a D::Archived>
     where
         D: Archive,
         D::Archived: CheckBytes<DefaultValidator<'a>>,
@@ -306,7 +316,7 @@ impl FileArray {
         Self::get_raw::<D>(&self.mmap, key)
     }
 
-    fn get_raw<'a, D>(slice: &'a [u8], key: Ref) -> Result<&'a D::Archived>
+    fn get_raw<'a, D>(slice: &'a [u8], key: Ref<D>) -> Result<&'a D::Archived>
     where
         D: Archive,
         D::Archived: CheckBytes<DefaultValidator<'a>>,
@@ -316,7 +326,7 @@ impl FileArray {
             .map_err(|e| Error::Validate(format!("{e}")))?)
     }
 
-    pub fn get_mut<'a, D>(&'a mut self, key: Ref) -> Result<Pin<&'a mut D::Archived>>
+    pub fn get_mut<'a, D>(&'a mut self, key: Ref<D>) -> Result<Pin<&'a mut D::Archived>>
     where
         D: Archive,
         D::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
@@ -373,14 +383,14 @@ mod test {
         assert_eq!(HEADER_SIZE, arr.len());
 
         assert!(matches!(
-            arr.get::<i32>(1000u64.into()),
+            arr.get::<i32>(Ref::new_u64(1000)),
             Err(Error::RefOutsideRange)
         ));
         assert!(matches!(
-            arr.get::<i32>(0u64.into()),
+            arr.get::<i32>(Ref::new_u64(0)),
             Err(Error::Validate(_))
         ));
-        assert!(matches!(arr.get::<()>(0u64.into()), Ok(_)));
+        assert!(matches!(arr.get::<()>(Ref::new_u64(0)), Ok(_)));
 
         let first_ref = arr.add_one(&123i32)?;
         assert!(arr.len() > HEADER_SIZE);
@@ -462,11 +472,11 @@ mod test {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn alignment_x86_64() {
-        assert_eq!(Ref(16), FileArray::ref_to_first::<u64>());
-        assert_eq!(Ref(16), FileArray::ref_to_first::<usize>());
-        assert_eq!(Ref(9), FileArray::ref_to_first::<u8>());
-        assert_eq!(Ref(24), FileArray::ref_to_first::<u128>());
-        assert_eq!(Ref(40), FileArray::ref_to_first::<MyStuff>());
+        assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<u64>());
+        assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<usize>());
+        assert_eq!(Ref::new_u64(9), FileArray::ref_to_first::<u8>());
+        assert_eq!(Ref::new_u64(24), FileArray::ref_to_first::<u128>());
+        assert_eq!(Ref::new_u64(40), FileArray::ref_to_first::<MyStuff>());
     }
 
     #[test]

@@ -2,33 +2,29 @@ use std::path::Path;
 use std::pin::Pin;
 
 use self::entry::*;
+use derivative::Derivative;
 use rkyv::validation::validators::DefaultValidator;
 use rkyv::vec::ArchivedVec;
-use rkyv::with::AsBox;
 use rkyv::{Archive, CheckBytes, Serialize};
 
 use crate::{
-    file_array::{self, ArchivedRef, FileArray, FileArraySerializer, Ref},
+    file_array::{self, FileArray, FileArraySerializer, Ref},
     imghash::hamming::{Distance, Hamming},
 };
 
 pub struct AnyValue; // TODO: panic if its archived value is read or something cool
 
-#[derive(Serialize, Archive)]
+#[derive(Serialize, Archive, Derivative)]
 #[archive(check_bytes)]
-struct Meta {
-    root: Ref,
+#[derivative(Default(bound = ""))]
+struct Meta<S> {
+    #[derivative(Default(value = "Ref::null()"))]
+    root: Ref<BKNode<S>>,
     // TODO: save some identifier for S
 }
 
-impl Default for Meta {
-    fn default() -> Self {
-        Self { root: Ref::null() }
-    }
-}
-
-impl ArchivedMeta {
-    fn root(self: Pin<&mut Self>) -> Pin<&mut ArchivedRef> {
+impl<S> ArchivedMeta<S> {
+    fn root(self: Pin<&mut Self>) -> Pin<&mut Ref<BKNode<S>>> {
         unsafe { self.map_unchecked_mut(|m| &mut m.root) }
     }
 }
@@ -39,11 +35,17 @@ const DEFAULT_CHILDREN_LIMIT: usize = 20;
 #[archive(check_bytes)]
 struct BKNode<S> {
     hash: Hamming,
-    #[with(AsBox)]
-    value: S,
+    value: S, // TODO: RefBox? DynRef? Utilise the trait object support?
     removed: bool,
-    children: Vec<Entry>,
-    next_sibling: Ref,
+    children: Vec<Entry<S>>,
+    next_sibling: Ref<BKNode<S>>,
+}
+
+#[derive(Serialize, Archive)]
+#[archive(check_bytes)]
+struct Children<S> {
+    entries: Vec<Entry<BKNode<S>>>,
+    next_sibling: Ref<Children<S>>,
 }
 
 impl<S> BKNode<S> {
@@ -62,7 +64,7 @@ impl<S> ArchivedBKNode<S>
 where
     S: Archive,
 {
-    fn pin_mut_children(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<ArchivedEntry>> {
+    fn pin_mut_children(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<ArchivedEntry<S>>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.children) }
     }
 }
@@ -80,9 +82,10 @@ impl<S> BKTree<S> {
         Self::new(db)
     }
 
+    // TODO: create and use a bktree::Result instead?
     fn new(mut db: FileArray) -> file_array::Result<Self> {
         if db.is_empty() {
-            db.add_one(&Meta::default())?;
+            db.add_one::<Meta<S>>(&Meta::default())?;
         }
 
         Ok(Self {
@@ -91,15 +94,15 @@ impl<S> BKTree<S> {
         })
     }
 
-    fn root(&self) -> file_array::Result<Ref> {
-        let meta_ref = FileArray::ref_to_first::<Meta>();
-        let meta = self.db.get::<Meta>(meta_ref)?;
-        Ok(meta.root.to_unarchived())
+    fn root(&self) -> file_array::Result<Ref<BKNode<S>>> {
+        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
+        let meta = self.db.get::<Meta<S>>(meta_ref)?;
+        Ok(meta.root)
     }
 
-    fn set_root(&mut self, new_root: Ref) -> file_array::Result<()> {
-        let meta_ref = FileArray::ref_to_first::<Meta>();
-        let meta = self.db.get_mut::<Meta>(meta_ref)?;
+    fn set_root(&mut self, new_root: Ref<BKNode<S>>) -> file_array::Result<()> {
+        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
+        let meta = self.db.get_mut::<Meta<S>>(meta_ref)?;
         meta.root().set(new_root);
         Ok(())
     }
@@ -163,41 +166,45 @@ where
 
     fn add_internal(
         &mut self,
-        mut cur_ref: Ref,
+        mut cur_ref: Ref<BKNode<S>>,
         hash: Hamming,
         value: S,
     ) -> file_array::Result<()> {
         assert!(!cur_ref.is_null());
-        loop {
-            // let cur_node = self.db.get::<BKNode<S>>(cur_ref)?;
-            let cur_node = self.db.get_mut::<BKNode<S>>(cur_ref)?;
-            let dist = cur_node.hash.to_unarchived().distance_to(hash);
-            let mut children = cur_node.pin_mut_children().pin_mut_slice();
+        // loop {
+        //     let cur_node = self.db.get::<BKNode<S>>(cur_ref)?;
+        //     let dist = cur_node.hash.distance_to(hash);
 
-            // match entry_get(&children, dist) {
-            //     Some(entry) => cur_ref = entry.value.to_unarchived(),
-            //     None if !cur_node.next_sibling.is_null() => {
-            //         cur_ref = cur_node.next_sibling.to_unarchived()
-            //     }
-            //     None => {
-            //         let new_node = BKNode::new(hash, value, DEFAULT_CHILDREN_LIMIT);
-            //         // let new_node = self.db.add_one(&new_node)?;
-            //         // match entry_add(children, Entry {key: dist, value: })
-            //     }
-            // }
-            // if let Some(&child_ref) = cur_node.children.get(&dist) {
-            //     cur_ref = child_ref;
-            // } else {
-            //     let new_ref = allocator(self, cur_ref)?;
-            //     let cur_node = self
-            //         .db
-            //         .deref_mut(cur_ref)?
-            //         .expect("the previous deref worked");
+        //     match entry_get(&cur_node.children, dist) {
+        //         Some(entry) => cur_ref = entry.value,
+        //         None => {
+        //             if !cur_node.next_sibling.is_null() {
+        //                 cur_ref = cur_node.next_sibling;
+        //             } else {
+        //                 let new_node = BKNode::new(hash, value, DEFAULT_CHILDREN_LIMIT);
+        //                 let new_node_ref = self.db.add_one(&new_node)?;
+        //                 let new_entry = Entry {
+        //                     key: dist,
+        //                     value: new_node_ref,
+        //                 };
 
-            //     cur_node.children.insert(dist, new_ref);
-            //     break;
-            // }
-        }
+        //                 let mut cur_node = self.db.get_mut::<BKNode<S>>(cur_ref)?;
+        //                 let mut children =
+        //                     cur_node.as_mut().pin_mut_children().pin_mut_slice();
+        //                 match entry_add(&mut children, new_entry) {
+        //                     Some(_) => break,
+        //                     None => {
+        //                         let new_sibling = BKNode::new(
+        //                             cur_node.hash,
+        //                             cur_node.value,
+        //                             DEFAULT_CHILDREN_LIMIT,
+        //                         );
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         Ok(())
     }
@@ -491,12 +498,15 @@ mod entry {
 
     #[derive(Serialize, Archive, PartialEq, Eq)]
     #[archive(check_bytes)]
-    pub struct Entry {
+    pub(super) struct Entry<S> {
         pub key: Distance,
-        pub value: Ref,
+        pub value: Ref<BKNode<S>>,
     }
 
-    pub fn entry_get(entries: &[ArchivedEntry], key: Distance) -> Option<&ArchivedEntry> {
+    pub(super) fn entry_get<S>(
+        entries: &[ArchivedEntry<S>],
+        key: Distance,
+    ) -> Option<&ArchivedEntry<S>> {
         debug_assert_ne!(key, ENTRY_KEY_UNUSED);
         entries
             .binary_search_by(|probe| probe.key.cmp(&key))
@@ -504,7 +514,10 @@ mod entry {
             .map(|i| &entries[i])
     }
 
-    pub fn entry_add(entries: &mut [ArchivedEntry], entry: Entry) -> Option<usize> {
+    pub(super) fn entry_add<S>(
+        entries: &mut [ArchivedEntry<S>],
+        entry: Entry<S>,
+    ) -> Option<usize> {
         if entry_is_full(entries) {
             return None;
         }
@@ -521,20 +534,20 @@ mod entry {
         }
     }
 
-    pub fn entry_is_full(entries: &[ArchivedEntry]) -> bool {
+    pub(super) fn entry_is_full<S>(entries: &[ArchivedEntry<S>]) -> bool {
         entries
             .last()
             .map(|ent| ent.key != ENTRY_KEY_UNUSED)
             .unwrap_or(true)
     }
 
-    pub fn entry_create(limit: usize) -> Vec<Entry> {
+    pub(super) fn entry_create<S>(limit: usize) -> Vec<Entry<S>> {
         let mut children = Vec::new();
         children.resize_with(limit, Default::default);
         children
     }
 
-    impl Default for Entry {
+    impl<S> Default for Entry<S> {
         fn default() -> Self {
             Self {
                 key: ENTRY_KEY_UNUSED,
@@ -543,8 +556,8 @@ mod entry {
         }
     }
 
-    impl From<Entry> for ArchivedEntry {
-        fn from(value: Entry) -> Self {
+    impl<S> From<Entry<S>> for ArchivedEntry<S> {
+        fn from(value: Entry<S>) -> Self {
             Self {
                 key: value.key,
                 value: value.value.into(),
@@ -552,11 +565,11 @@ mod entry {
         }
     }
 
-    impl From<&ArchivedEntry> for Entry {
-        fn from(value: &ArchivedEntry) -> Self {
+    impl<S> From<&ArchivedEntry<S>> for Entry<S> {
+        fn from(value: &ArchivedEntry<S>) -> Self {
             Self {
                 key: value.key,
-                value: value.value.to_unarchived(),
+                value: value.value,
             }
         }
     }
@@ -565,7 +578,7 @@ mod entry {
     mod test {
         use super::*;
 
-        fn entry(key: Distance) -> Entry {
+        fn entry<S>(key: Distance) -> Entry<S> {
             Entry {
                 key,
                 value: Ref::null(),
@@ -578,7 +591,7 @@ mod entry {
             assert_eq!(5, entries.len());
             assert!(entries.iter().all(|e| e == &Entry::default()));
 
-            let mut archived: Vec<ArchivedEntry> =
+            let mut archived: Vec<ArchivedEntry<()>> =
                 entries.into_iter().map(Into::into).collect();
             assert!(!entry_is_full(&archived));
             assert!(entry_get(&archived, 2).is_none());

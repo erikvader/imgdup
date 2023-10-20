@@ -1,3 +1,6 @@
+use rkyv::bytecheck;
+use rkyv::CheckBytes;
+
 pub type Distance = u32;
 pub type Container = u128;
 
@@ -11,10 +14,9 @@ pub type Container = u128;
     Eq,
     Ord,
     PartialOrd,
-    rkyv::Serialize,
-    rkyv::Archive,
+    CheckBytes,
 )]
-#[archive(check_bytes)]
+#[repr(transparent)]
 pub struct Hamming(pub Container);
 
 impl Hamming {
@@ -53,9 +55,26 @@ impl std::fmt::Display for Hamming {
     }
 }
 
-impl ArchivedHamming {
-    pub fn to_unarchived(&self) -> Hamming {
-        Hamming(self.0)
+impl rkyv::Archive for Hamming {
+    type Archived = Self;
+    type Resolver = ();
+
+    unsafe fn resolve(
+        &self,
+        _pos: usize,
+        _resolver: Self::Resolver,
+        out: *mut Self::Archived,
+    ) {
+        out.write(*self);
+    }
+}
+
+impl<S: rkyv::Fallible + ?Sized> rkyv::Serialize<S> for Hamming {
+    fn serialize(
+        &self,
+        _serializer: &mut S,
+    ) -> std::result::Result<Self::Resolver, <S as rkyv::Fallible>::Error> {
+        Ok(())
     }
 }
 
