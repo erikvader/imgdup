@@ -12,7 +12,15 @@ use crate::{
     imghash::hamming::{Distance, Hamming},
 };
 
-pub struct AnyValue; // TODO: panic if its archived value is read or something cool
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    FileArray(#[from] file_array::Error),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub struct AnyValue(str); // TODO: panic if its archived value is read or something cool
 
 #[derive(Serialize, Archive, Derivative)]
 #[archive(check_bytes)]
@@ -37,26 +45,53 @@ struct BKNode<S> {
     hash: Hamming,
     value: S, // TODO: RefBox? DynRef? Utilise the trait object support?
     removed: bool,
-    children: Vec<Entry<S>>,
-    next_sibling: Ref<BKNode<S>>,
+    children: Ref<Children<S>>,
 }
 
 #[derive(Serialize, Archive)]
 #[archive(check_bytes)]
 struct Children<S> {
-    entries: Vec<Entry<BKNode<S>>>,
+    entries: Vec<Entry<S>>,
     next_sibling: Ref<Children<S>>,
 }
 
+impl<S> Children<S> {
+    fn new(limit: usize) -> Self {
+        assert!(limit > 0);
+        Self {
+            entries: entry_create(limit),
+            next_sibling: Ref::null(),
+        }
+    }
+
+    fn new_initial(limit: usize, initial_element: Entry<S>) -> Self {
+        let mut selff = Self::new(limit);
+        *selff.entries.first_mut().expect("the vec is not empty") = initial_element;
+        selff
+    }
+}
+
 impl<S> BKNode<S> {
-    fn new(hash: Hamming, value: S, children_limit: usize) -> Self {
+    fn new(hash: Hamming, value: S) -> Self {
         Self {
             hash,
             value,
-            children: entry_create(children_limit),
+            children: Ref::null(),
             removed: false,
-            next_sibling: Ref::null(),
         }
+    }
+}
+
+impl<S> ArchivedChildren<S>
+where
+    S: Archive,
+{
+    fn pin_mut_entries(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<ArchivedEntry<S>>> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.entries) }
+    }
+
+    fn mut_next_sibling(self: Pin<&mut Self>) -> &mut Ref<Children<S>> {
+        unsafe { &mut self.get_unchecked_mut().next_sibling }
     }
 }
 
@@ -64,8 +99,8 @@ impl<S> ArchivedBKNode<S>
 where
     S: Archive,
 {
-    fn pin_mut_children(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<ArchivedEntry<S>>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.children) }
+    fn mut_children(self: Pin<&mut Self>) -> &mut Ref<Children<S>> {
+        unsafe { &mut self.get_unchecked_mut().children }
     }
 }
 
@@ -77,13 +112,13 @@ pub struct BKTree<S> {
 impl<S> BKTree<S> {
     // TODO: Somehow allow opening without caring what S is. Handy for rebuilding or
     // collecting stats.
-    pub fn from_file(file: impl AsRef<Path>) -> file_array::Result<Self> {
+    pub fn from_file(file: impl AsRef<Path>) -> Result<Self> {
         let db = FileArray::new(file)?;
         Self::new(db)
     }
 
     // TODO: create and use a bktree::Result instead?
-    fn new(mut db: FileArray) -> file_array::Result<Self> {
+    fn new(mut db: FileArray) -> Result<Self> {
         if db.is_empty() {
             db.add_one::<Meta<S>>(&Meta::default())?;
         }
@@ -94,13 +129,13 @@ impl<S> BKTree<S> {
         })
     }
 
-    fn root(&self) -> file_array::Result<Ref<BKNode<S>>> {
+    fn root(&self) -> Result<Ref<BKNode<S>>> {
         let meta_ref = FileArray::ref_to_first::<Meta<S>>();
         let meta = self.db.get::<Meta<S>>(meta_ref)?;
         Ok(meta.root)
     }
 
-    fn set_root(&mut self, new_root: Ref<BKNode<S>>) -> file_array::Result<()> {
+    fn set_root(&mut self, new_root: Ref<BKNode<S>>) -> Result<()> {
         let meta_ref = FileArray::ref_to_first::<Meta<S>>();
         let meta = self.db.get_mut::<Meta<S>>(meta_ref)?;
         meta.root().set(new_root);
@@ -146,7 +181,7 @@ where
     // pub fn add_all(
     //     &mut self,
     //     items: impl IntoIterator<Item = (Hamming, S)>,
-    // ) -> heap::Result<()> {
+    // ) -> Result<()> {
     //     let mut items = items.into_iter();
     //     if let Some((hash, value)) = items.next() {
     //         if self.root().is_null() {
@@ -160,62 +195,75 @@ where
     //     for (hash, value) in items {
     //         self.add_internal_new(hash, value)?;
     //     }
-    //     self.db.checkpoint()?;
     //     Ok(())
     // }
 
     fn add_internal(
         &mut self,
-        mut cur_ref: Ref<BKNode<S>>,
+        mut cur_node_ref: Ref<BKNode<S>>,
         hash: Hamming,
         value: S,
-    ) -> file_array::Result<()> {
-        assert!(!cur_ref.is_null());
-        // loop {
-        //     let cur_node = self.db.get::<BKNode<S>>(cur_ref)?;
-        //     let dist = cur_node.hash.distance_to(hash);
+    ) -> Result<()> {
+        assert!(!cur_node_ref.is_null());
 
-        //     match entry_get(&cur_node.children, dist) {
-        //         Some(entry) => cur_ref = entry.value,
-        //         None => {
-        //             if !cur_node.next_sibling.is_null() {
-        //                 cur_ref = cur_node.next_sibling;
-        //             } else {
-        //                 let new_node = BKNode::new(hash, value, DEFAULT_CHILDREN_LIMIT);
-        //                 let new_node_ref = self.db.add_one(&new_node)?;
-        //                 let new_entry = Entry {
-        //                     key: dist,
-        //                     value: new_node_ref,
-        //                 };
+        let new_node = BKNode::new(hash, value);
+        let new_node_ref = self.db.add_one(&new_node)?;
 
-        //                 let mut cur_node = self.db.get_mut::<BKNode<S>>(cur_ref)?;
-        //                 let mut children =
-        //                     cur_node.as_mut().pin_mut_children().pin_mut_slice();
-        //                 match entry_add(&mut children, new_entry) {
-        //                     Some(_) => break,
-        //                     None => {
-        //                         let new_sibling = BKNode::new(
-        //                             cur_node.hash,
-        //                             cur_node.value,
-        //                             DEFAULT_CHILDREN_LIMIT,
-        //                         );
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
+        'nodes: loop {
+            let cur_node = self.db.get(cur_node_ref)?;
+            let dist = cur_node.hash.distance_to(hash);
+
+            let new_entry = Entry {
+                key: dist,
+                value: new_node_ref,
+            };
+
+            if cur_node.children.is_null() {
+                let new_children =
+                    Children::<S>::new_initial(DEFAULT_CHILDREN_LIMIT, new_entry);
+                let new_children_ref = self.db.add_one(&new_children)?;
+                let cur_node = self.db.get_mut(cur_node_ref)?;
+                assert_eq!(Ref::null(), cur_node.children);
+                *cur_node.mut_children() = new_children_ref;
+                break 'nodes;
+            }
+
+            let mut cur_children_ref = cur_node.children;
+            'children: loop {
+                let cur_children = self.db.get(cur_children_ref)?;
+                match entry_get(&cur_children.entries, dist) {
+                    Some(entry) => {
+                        cur_node_ref = entry.value;
+                        break 'children;
+                    }
+                    None if !cur_children.next_sibling.is_null() => {
+                        cur_children_ref = cur_children.next_sibling;
+                    }
+                    None => {
+                        let cur_children = self.db.get_mut(cur_children_ref)?;
+                        let mut entries = cur_children.pin_mut_entries().pin_mut_slice();
+                        match entry_add(&mut entries, new_entry.clone()) {
+                            Some(_) => (),
+                            None => {
+                                let new_sibling = Children::<S>::new_initial(
+                                    DEFAULT_CHILDREN_LIMIT,
+                                    new_entry,
+                                );
+                                let new_sibling_ref = self.db.add_one(&new_sibling)?;
+
+                                let cur_children = self.db.get_mut(cur_children_ref)?;
+                                assert_eq!(Ref::null(), cur_children.next_sibling);
+                                *cur_children.mut_next_sibling() = new_sibling_ref;
+                            }
+                        }
+                        break 'nodes;
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
-
-    // fn add_internal_new(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
-    //     self.add_internal(self.root(), hash, |selff, parent_ref| {
-    //         selff
-    //             .db
-    //             .allocate_local(parent_ref, BKNode::new(hash, value))
-    //     })
-    // }
 
     // // TODO: is it possible to somehow make this use `for_each_internal`?
     // pub fn find_within<F>(
@@ -347,6 +395,12 @@ where
 
     //     Ok((alive, dead))
     // }
+}
+
+impl<S> BKTree<S> {
+    pub fn flush(&self) -> Result<()> {
+        Ok(self.db.flush()?)
+    }
 }
 
 #[cfg(test)]
@@ -496,7 +550,8 @@ mod entry {
     // TODO: static assert that this is outside of Hamming::min_distance and hamming max
     const ENTRY_KEY_UNUSED: Distance = Distance::MAX;
 
-    #[derive(Serialize, Archive, PartialEq, Eq)]
+    #[derive(Serialize, Archive, PartialEq, Eq, Derivative)]
+    #[derivative(Clone(bound = ""))]
     #[archive(check_bytes)]
     pub(super) struct Entry<S> {
         pub key: Distance,

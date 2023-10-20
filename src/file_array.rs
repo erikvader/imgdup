@@ -56,6 +56,10 @@ pub struct Ref<T> {
     _t: std::marker::PhantomData<T>,
 }
 
+// The automatic impl also requires that `T` is Unpin, but that doesn't matter in this
+// case.
+impl<T> Unpin for Ref<T> {}
+
 impl<T> rkyv::Archive for Ref<T> {
     type Archived = Self;
     type Resolver = ();
@@ -88,7 +92,7 @@ impl<T> Ref<T> {
         self.offset
     }
 
-    pub fn null() -> Self {
+    pub const fn null() -> Self {
         Self::new_u64(0)
     }
 
@@ -96,7 +100,7 @@ impl<T> Ref<T> {
         self.offset == 0
     }
 
-    fn new_u64(offset: u64) -> Self {
+    const fn new_u64(offset: u64) -> Self {
         Self {
             offset,
             _t: std::marker::PhantomData,
@@ -169,6 +173,10 @@ impl FileArray {
 
     pub fn is_empty(&self) -> bool {
         self.len() <= HEADER_SIZE
+    }
+
+    pub fn flush(&self) -> Result<()> {
+        Ok(self.mmap.flush()?)
     }
 
     pub fn copy_to<W>(&mut self, mut writer: W) -> Result<()>
