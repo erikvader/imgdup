@@ -1,6 +1,7 @@
 use rkyv::bytecheck;
 use rkyv::CheckBytes;
 
+// TODO: use a wrapper struct instead for better type checking, but worse ergonomics?
 pub type Distance = u32;
 pub type Container = u128;
 

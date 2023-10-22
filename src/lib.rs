@@ -1,3 +1,4 @@
+// TODO: re-organize everything into a nicer folder structure
 pub mod bktree;
 pub mod bktree2;
 pub mod common;

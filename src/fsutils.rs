@@ -15,7 +15,10 @@ pub fn is_basename(path: impl AsRef<Path>) -> bool {
     components.next().is_none()
 }
 
-/// Checks whether the given path is relative and only contains slashes and filenames
+// TODO: create a type backed by a `String` that is rkyv::Archive, and that also must be
+// simple relative.
+/// Checks whether the given path is relative, is UTF-8 and only contains slashes and
+/// filenames
 pub fn is_simple_relative(path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();
     if !path

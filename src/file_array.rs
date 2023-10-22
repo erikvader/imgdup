@@ -88,7 +88,7 @@ impl<T> Ref<T> {
         self.offset.try_into().expect("expecting 64 bit arch")
     }
 
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         self.offset
     }
 
@@ -96,8 +96,12 @@ impl<T> Ref<T> {
         Self::new_u64(0)
     }
 
-    pub fn is_null(self) -> bool {
+    pub const fn is_null(self) -> bool {
         self.offset == 0
+    }
+
+    pub const fn is_not_null(self) -> bool {
+        !self.is_null()
     }
 
     const fn new_u64(offset: u64) -> Self {
@@ -138,7 +142,11 @@ pub struct FileArray {
 impl FileArray {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         // TODO: flock using fs2?
-        let file = fs::OpenOptions::new().read(true).create(true).open(path)?;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
         Self::new_opened(file)
     }
 
@@ -171,6 +179,17 @@ impl FileArray {
         Ok(Self { mmap, seri })
     }
 
+    #[cfg(test)]
+    pub fn new_tempfile() -> Result<Self> {
+        let tmpf = tempfile::tempfile()?;
+        Self::new_opened(tmpf)
+    }
+
+    #[cfg(test)]
+    pub fn clone_filehandle(&mut self) -> io::Result<File> {
+        self.with_file(|file| file.get_ref().try_clone())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() <= HEADER_SIZE
     }
@@ -183,7 +202,7 @@ impl FileArray {
     where
         W: Write,
     {
-        self.on_file(|file| -> Result<()> {
+        self.with_file(|file| -> Result<()> {
             let original_pos = file.seek(SeekFrom::Current(0))?;
 
             let res = || -> Result<()> {
@@ -228,7 +247,7 @@ impl FileArray {
         Ref::new_usize(pos + align_diff + std::mem::size_of::<T>())
     }
 
-    fn on_file<F, R>(&mut self, appl: F) -> R
+    fn with_file<F, R>(&mut self, appl: F) -> R
     where
         F: FnOnce(&mut BufWriter<File>) -> R,
     {
@@ -268,7 +287,7 @@ impl FileArray {
         let new_len = file_len + additional;
         let new_len_u64: u64 = new_len.try_into().expect("expecting 64 bit arch");
 
-        self.on_file(|file| file.get_mut().set_len(new_len_u64))?;
+        self.with_file(|file| file.get_mut().set_len(new_len_u64))?;
         unsafe {
             // TODO: are the advices preserved?
             self.mmap
@@ -292,7 +311,7 @@ impl FileArray {
             refs.push(Ref::new_usize(self.seri.pos()));
         }
 
-        self.on_file(|file| file.flush())?;
+        self.with_file(|file| file.flush())?;
 
         if let Some(&last_ref) = refs.last() {
             self.set_len(last_ref.into());
@@ -354,7 +373,6 @@ impl FileArray {
 mod test {
     use super::*;
     use rkyv::bytecheck;
-    use tempfile::tempfile;
 
     #[derive(Archive, Serialize)]
     #[archive_attr(derive(CheckBytes))]
@@ -372,8 +390,7 @@ mod test {
 
     #[test]
     fn add_empty() -> Result<()> {
-        let tmpf = tempfile()?;
-        let mut arr = FileArray::new_opened(tmpf)?;
+        let mut arr = FileArray::new_tempfile()?;
         let len_before = arr.len();
         let mmap_len_before = arr.mmap.len();
         arr.add([] as [&i32; 0])?;
@@ -384,8 +401,7 @@ mod test {
 
     #[test]
     fn basic_add() -> Result<()> {
-        let tmpf = tempfile()?;
-        let mut arr = FileArray::new_opened(tmpf)?;
+        let mut arr = FileArray::new_tempfile()?;
 
         let mmap_len_before = arr.mmap.len();
         assert_eq!(HEADER_SIZE, arr.len());
@@ -414,9 +430,8 @@ mod test {
 
     #[test]
     fn mutate() -> Result<()> {
-        let tmpf = tempfile()?;
-        let tmpf2 = tmpf.try_clone()?;
-        let mut arr = FileArray::new_opened(tmpf)?;
+        let mut arr = FileArray::new_tempfile()?;
+        let tmpf2 = arr.clone_filehandle()?;
 
         let ele_ref = arr.add_one(&MyStuff {
             a: 0,
@@ -439,8 +454,7 @@ mod test {
 
     #[test]
     fn add_many() -> Result<()> {
-        let tmpf = tempfile()?;
-        let mut arr = FileArray::new_opened(tmpf)?;
+        let mut arr = FileArray::new_tempfile()?;
 
         let refs = arr.add([&1i32, &10, &100])?;
         assert_eq!(&1, arr.get::<i32>(refs[0])?);
@@ -453,11 +467,10 @@ mod test {
 
     #[test]
     fn reopen() -> Result<()> {
-        let tmpf = tempfile()?;
-        let mut tmpf2 = tmpf.try_clone()?;
-        let mut tmpf3 = tmpf.try_clone()?;
+        let mut arr = FileArray::new_tempfile()?;
+        let mut tmpf2 = arr.clone_filehandle()?;
+        let mut tmpf3 = arr.clone_filehandle()?;
 
-        let mut arr = FileArray::new_opened(tmpf)?;
         let ref_1 = arr.add_one(&1u32)?;
         drop(arr);
 
@@ -489,8 +502,7 @@ mod test {
 
     #[test]
     fn copy_to_writer() -> Result<()> {
-        let tmpf = tempfile()?;
-        let mut arr = FileArray::new_opened(tmpf)?;
+        let mut arr = FileArray::new_tempfile()?;
         arr.add_one(&123u8)?;
 
         let mut buf = Vec::new();

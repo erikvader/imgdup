@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use std::path::Path;
 use std::pin::Pin;
 
@@ -117,7 +118,6 @@ impl<S> BKTree<S> {
         Self::new(db)
     }
 
-    // TODO: create and use a bktree::Result instead?
     fn new(mut db: FileArray) -> Result<Self> {
         if db.is_empty() {
             db.add_one::<Meta<S>>(&Meta::default())?;
@@ -141,12 +141,15 @@ impl<S> BKTree<S> {
         meta.root().set(new_root);
         Ok(())
     }
+
+    pub fn flush(&self) -> Result<()> {
+        Ok(self.db.flush()?)
+    }
 }
 
 impl<S> BKTree<S>
 where
-    // TODO: are both needed for all operations? Getters should only need Archive
-    S: Serialize<FileArraySerializer> + Archive,
+    S: Serialize<FileArraySerializer>,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
 {
     // pub fn count_nodes(&mut self) -> heap::Result<(usize, usize)> {
@@ -166,37 +169,31 @@ where
     //     Ok((alive, dead))
     // }
 
-    // // TODO: this is just add_all with a list of size 1
-    // pub fn add(&mut self, hash: Hamming, value: S) -> heap::Result<()> {
-    //     if self.root().is_null() {
-    //         let root = self.db.allocate(BKNode::new(hash, value))?;
-    //         self.set_root(root);
-    //     } else {
-    //         self.add_internal_new(hash, value)?;
-    //     }
-    //     self.db.checkpoint()?;
-    //     Ok(())
-    // }
+    pub fn add(&mut self, hash: Hamming, value: S) -> Result<()> {
+        self.add_all([(hash, value)])
+    }
 
-    // pub fn add_all(
-    //     &mut self,
-    //     items: impl IntoIterator<Item = (Hamming, S)>,
-    // ) -> Result<()> {
-    //     let mut items = items.into_iter();
-    //     if let Some((hash, value)) = items.next() {
-    //         if self.root().is_null() {
-    //             let root = self.db.allocate(BKNode::new(hash, value))?;
-    //             self.set_root(root);
-    //         } else {
-    //             self.add_internal_new(hash, value)?;
-    //         }
-    //     }
+    pub fn add_all(
+        &mut self,
+        items: impl IntoIterator<Item = (Hamming, S)>,
+    ) -> Result<()> {
+        let mut root = self.root()?;
+        let mut items = items.into_iter();
 
-    //     for (hash, value) in items {
-    //         self.add_internal_new(hash, value)?;
-    //     }
-    //     Ok(())
-    // }
+        if let Some((hash, value)) = items.next() {
+            if root.is_null() {
+                root = self.db.add_one(&BKNode::new(hash, value))?;
+                self.set_root(root)?;
+            } else {
+                self.add_internal(root, hash, value)?;
+            }
+        }
+
+        for (hash, value) in items {
+            self.add_internal(root, hash, value)?;
+        }
+        Ok(())
+    }
 
     fn add_internal(
         &mut self,
@@ -204,7 +201,7 @@ where
         hash: Hamming,
         value: S,
     ) -> Result<()> {
-        assert!(!cur_node_ref.is_null());
+        assert!(cur_node_ref.is_not_null());
 
         let new_node = BKNode::new(hash, value);
         let new_node_ref = self.db.add_one(&new_node)?;
@@ -314,49 +311,83 @@ where
     //     self.db.checkpoint()?;
     //     Ok(())
     // }
+}
 
-    // pub fn for_each<F>(&mut self, mut visit: F) -> heap::Result<()>
-    // where
-    //     F: FnMut(Hamming, &S),
-    // {
-    //     self.for_each_internal(
-    //         |_, node| {
-    //             if let Some(value) = &node.value {
-    //                 visit(node.hash, value);
-    //             }
-    //             false
-    //         },
-    //         |_, _| (),
-    //     )
-    // }
+#[derive(Derivative, Debug, Clone, PartialEq, Eq)]
+#[derivative(Default)]
+enum IterateCmd {
+    #[derivative(Default)]
+    Continue,
+    WithinRange(RangeInclusive<Distance>),
+    Stop,
+}
 
-    // fn for_each_internal<F, M>(
-    //     &mut self,
-    //     mut filter: F,
-    //     mut modifier: M,
-    // ) -> heap::Result<()>
-    // where
-    //     F: FnMut(Ref, &BKNode<S>) -> bool,
-    //     M: FnMut(Ref, &mut BKNode<S>),
-    // {
-    //     let mut stack = Vec::new();
-    //     if !self.root().is_null() {
-    //         stack.push(self.root());
-    //     }
+macro_rules! impl_walk {
+    ($fun_name:ident, $self_type:ty, $visit_arg:ty, $db_get:ident, $visit_prep:expr) => {
+        fn $fun_name<F>(self: $self_type, mut visit: F) -> Result<()>
+        where
+            F: FnMut($visit_arg) -> IterateCmd,
+        {
+            let mut stack = Vec::new();
+            {
+                let root = self.root()?;
+                if root.is_not_null() {
+                    stack.push(root);
+                }
+            }
 
-    //     while let Some(cur_ref) = stack.pop() {
-    //         let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
-    //         stack.extend(cur_node.children.values());
+            while let Some(cur_ref) = stack.pop() {
+                let mut cur_node = self.db.$db_get(cur_ref)?;
+                let dist_range = match visit($visit_prep(&mut cur_node)) {
+                    IterateCmd::Continue => Distance::MIN..=Distance::MAX,
+                    IterateCmd::WithinRange(range) => range,
+                    IterateCmd::Stop => break,
+                };
 
-    //         if filter(cur_ref, &cur_node) {
-    //             let cur_node =
-    //                 self.db.deref_mut(cur_ref)?.expect("previous deref worked");
-    //             modifier(cur_ref, cur_node);
-    //         }
-    //     }
+                let mut children_ref = cur_node.children;
+                while children_ref.is_not_null() {
+                    let children_node = self.db.get(children_ref)?;
+                    stack.extend(
+                        children_node
+                            .entries
+                            .iter()
+                            .filter(|entry| dist_range.contains(&entry.key))
+                            .map(|entry| entry.value),
+                    );
+                    children_ref = children_node.next_sibling;
+                }
+            }
 
-    //     Ok(())
-    // }
+            Ok(())
+        }
+    };
+}
+
+impl<S> BKTree<S>
+where
+    S: Archive,
+    S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
+{
+    impl_walk!(
+        walk_mut,
+        &mut Self,
+        Pin<&mut ArchivedBKNode<S>>,
+        get_mut,
+        Pin::as_mut
+    );
+    impl_walk!(walk, &Self, &ArchivedBKNode<S>, get, std::convert::identity);
+
+    pub fn for_each<F>(&self, mut visit: F) -> Result<()>
+    where
+        F: FnMut(Hamming, &S::Archived),
+    {
+        self.walk(|node| {
+            if !node.removed {
+                visit(node.hash, &node.value);
+            }
+            IterateCmd::default()
+        })
+    }
 
     // pub fn rebuild(&mut self) -> heap::Result<(usize, usize)> {
     //     let mut dead = 0;
@@ -397,59 +428,58 @@ where
     // }
 }
 
-impl<S> BKTree<S> {
-    pub fn flush(&self) -> Result<()> {
-        Ok(self.db.flush()?)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::{collections::HashSet, path::PathBuf};
 
     use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
+    use tempfile::tempfile;
 
     use super::*;
 
-    //     fn value(path: impl Into<PathBuf>) -> PathBuf {
-    //         path.into()
-    //     }
+    type Source = String;
+    fn value(path: impl Into<Source>) -> Source {
+        path.into()
+    }
 
-    //     fn contents(tree: &mut BKTree<PathBuf>) -> heap::Result<Vec<(Hamming, String)>> {
-    //         let mut all = Vec::new();
-    //         tree.for_each(|ham, val| {
-    //             all.push((ham, val.clone().into_os_string().into_string().unwrap()))
-    //         })?;
-    //         all.sort();
-    //         Ok(all)
-    //     }
+    fn create_bktree_tempfile<S>() -> Result<BKTree<S>> {
+        let arr = FileArray::new_tempfile()?;
+        BKTree::new(arr)
+    }
 
-    //     #[test]
-    //     fn add() -> heap::Result<()> {
-    //         let mut tree = BKTree::in_memory()?;
-    //         tree.add(Hamming(0b101), value("5_1"))?;
-    //         tree.add(Hamming(0b101), value("5_2"))?;
-    //         tree.add(Hamming(0b100), value("4"))?;
+    fn contents(tree: &mut BKTree<Source>) -> Result<Vec<(Hamming, String)>> {
+        let mut all = Vec::new();
+        tree.for_each(|ham, val| all.push((ham, val.as_str().to_owned())))?;
+        all.sort();
+        Ok(all)
+    }
 
-    //         let all = contents(&mut tree)?;
+    #[test]
+    fn add() -> Result<()> {
+        let mut tree = create_bktree_tempfile()?;
+        tree.add(Hamming(0b101), value("5_1"))?;
+        tree.add(Hamming(0b101), value("5_2"))?;
+        tree.add(Hamming(0b100), value("4"))?;
 
-    //         assert_eq!(
-    //             vec![
-    //                 (Hamming(0b100), "4".to_string()),
-    //                 (Hamming(0b101), "5_1".to_string()),
-    //                 (Hamming(0b101), "5_2".to_string()),
-    //             ],
-    //             all
-    //         );
+        let all = contents(&mut tree)?;
 
-    //         let mut closest = Vec::new();
-    //         tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.clone()))?;
-    //         closest.sort();
-    //         let answer: Vec<PathBuf> = vec!["5_1".into(), "5_2".into()];
-    //         assert_eq!(answer, closest);
+        assert_eq!(
+            vec![
+                (Hamming(0b100), "4".to_string()),
+                (Hamming(0b101), "5_1".to_string()),
+                (Hamming(0b101), "5_2".to_string()),
+            ],
+            all
+        );
 
-    //         Ok(())
-    //     }
+        // let mut closest = Vec::new();
+        // tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.clone()))?;
+        // closest.sort();
+        // let answer: Vec<PathBuf> = vec!["5_1".into(), "5_2".into()];
+        // assert_eq!(answer, closest);
+
+        Ok(())
+    }
 
     //     #[test]
     //     fn remove() -> heap::Result<()> {
