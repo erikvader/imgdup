@@ -240,11 +240,17 @@ impl FileArray {
     }
 
     // TODO: should be marked as unsafe?
-    pub fn ref_to_first<T>() -> Ref<T> {
+    /// Ref to the first element of type `T`, whose serialized size must be
+    /// `size_of<T::Archived>`, i.e., should not have stuff like strings cuz they get
+    /// serialized before `T`, making it hard to get the position of `T`.
+    pub fn ref_to_first<T>() -> Ref<T>
+    where
+        T: Archive,
+    {
         let pos = HEADER_SIZE;
-        let align = std::mem::align_of::<T>();
+        let align = std::mem::align_of::<T::Archived>();
         let align_diff = (align - (pos % align)) % align;
-        Ref::new_usize(pos + align_diff + std::mem::size_of::<T>())
+        Ref::new_usize(pos + align_diff + std::mem::size_of::<T::Archived>())
     }
 
     fn with_file<F, R>(&mut self, appl: F) -> R
