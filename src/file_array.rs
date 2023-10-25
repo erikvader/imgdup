@@ -33,7 +33,7 @@ pub enum Error {
     #[error("ref outside of range")]
     RefOutsideRange,
     #[error("validation error: {0}")]
-    Validate(String), // TODO: needed?
+    Validate(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -188,6 +188,12 @@ impl FileArray {
     #[cfg(test)]
     pub fn clone_filehandle(&mut self) -> io::Result<File> {
         self.with_file(|file| file.get_ref().try_clone())
+    }
+
+    #[cfg(test)]
+    pub fn raw_data(&self) -> &[u8] {
+        let len = self.len();
+        &self.mmap[..len]
     }
 
     pub fn is_empty(&self) -> bool {
@@ -354,6 +360,7 @@ impl FileArray {
         D: Archive,
         D::Archived: CheckBytes<DefaultValidator<'a>>,
     {
+        assert!(key.is_not_null());
         let slice = slice.get(..key.as_usize()).ok_or(Error::RefOutsideRange)?;
         Ok(rkyv::check_archived_root::<D>(slice)
             .map_err(|e| Error::Validate(format!("{e}")))?)
@@ -364,6 +371,7 @@ impl FileArray {
         D: Archive,
         D::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
     {
+        assert!(key.is_not_null());
         let slice = self
             .mmap
             .get_mut(..key.as_usize())

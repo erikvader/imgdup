@@ -348,8 +348,7 @@ macro_rules! impl_walk {
                 while children_ref.is_not_null() {
                     let children_node = self.db.get(children_ref)?;
                     stack.extend(
-                        children_node
-                            .entries
+                        entry_used(&children_node.entries)
                             .iter()
                             .filter(|entry| dist_range.contains(&entry.key))
                             .map(|entry| entry.value),
@@ -447,7 +446,7 @@ mod test {
         BKTree::new(arr)
     }
 
-    fn contents(tree: &mut BKTree<Source>) -> Result<Vec<(Hamming, String)>> {
+    fn contents(tree: &BKTree<Source>) -> Result<Vec<(Hamming, String)>> {
         let mut all = Vec::new();
         tree.for_each(|ham, val| all.push((ham, val.as_str().to_owned())))?;
         all.sort();
@@ -456,12 +455,12 @@ mod test {
 
     #[test]
     fn add() -> Result<()> {
-        let mut tree = create_bktree_tempfile()?;
+        let mut tree: BKTree<Source> = create_bktree_tempfile()?;
         tree.add(Hamming(0b101), value("5_1"))?;
         tree.add(Hamming(0b101), value("5_2"))?;
         tree.add(Hamming(0b100), value("4"))?;
 
-        let all = contents(&mut tree)?;
+        let all = contents(&tree)?;
 
         assert_eq!(
             vec![
@@ -577,7 +576,9 @@ mod test {
 mod entry {
     use super::*;
 
-    // TODO: static assert that this is outside of Hamming::min_distance and hamming max
+    // TODO: static assert that this is outside of Hamming::min_distance and
+    // hamming::max_distance. Also greater than hamming::max_distance to make sure it gets
+    // sorted last.
     const ENTRY_KEY_UNUSED: Distance = Distance::MAX;
 
     #[derive(Serialize, Archive, PartialEq, Eq, Derivative)]
@@ -592,7 +593,7 @@ mod entry {
         entries: &[ArchivedEntry<S>],
         key: Distance,
     ) -> Option<&ArchivedEntry<S>> {
-        debug_assert_ne!(key, ENTRY_KEY_UNUSED);
+        assert_ne!(key, ENTRY_KEY_UNUSED);
         entries
             .binary_search_by(|probe| probe.key.cmp(&key))
             .ok()
@@ -611,7 +612,7 @@ mod entry {
             Err(i) if (..entries.len()).contains(&i) => {
                 entries[i..].rotate_right(1);
                 let target = &mut entries[i];
-                debug_assert_eq!(ENTRY_KEY_UNUSED, target.key);
+                assert_eq!(ENTRY_KEY_UNUSED, target.key);
                 *target = entry.into();
                 Some(i)
             }
@@ -630,6 +631,19 @@ mod entry {
         let mut children = Vec::new();
         children.resize_with(limit, Default::default);
         children
+    }
+
+    pub(super) fn entry_used<S>(entries: &[ArchivedEntry<S>]) -> &[ArchivedEntry<S>] {
+        const SEARCH_KEY: Distance = ENTRY_KEY_UNUSED - 1;
+        match entries.binary_search_by(|probe| probe.key.cmp(&SEARCH_KEY)) {
+            Ok(_) => panic!("the search key should not exist"),
+            Err(i) if (..entries.len()).contains(&i) => {
+                let target = &entries[i];
+                assert_eq!(ENTRY_KEY_UNUSED, target.key);
+                &entries[..i]
+            }
+            Err(_) => entries,
+        }
     }
 
     impl<S> Default for Entry<S> {
@@ -680,6 +694,7 @@ mod entry {
                 entries.into_iter().map(Into::into).collect();
             assert!(!entry_is_full(&archived));
             assert!(entry_get(&archived, 2).is_none());
+            assert_eq!(0, entry_used(&archived).len());
 
             assert_eq!(Some(0), entry_add(&mut archived, entry(2)));
             assert_eq!(Some(1), entry_add(&mut archived, entry(4)));
@@ -689,8 +704,10 @@ mod entry {
             assert_eq!(None, entry_add(&mut archived, entry(3)));
 
             assert!(!entry_is_full(&archived));
+            assert_eq!(4, entry_used(&archived).len());
             assert_eq!(Some(4), entry_add(&mut archived, entry(7)));
             assert!(entry_is_full(&archived));
+            assert_eq!(5, entry_used(&archived).len());
             assert_eq!(None, entry_add(&mut archived, entry(8)));
 
             assert!(entry_get(&archived, 7).is_some());
