@@ -20,6 +20,9 @@ use rkyv::{
     Archive, CheckBytes, Serialize,
 };
 
+// TODO: add backtraces when it is stable
+// https://github.com/dtolnay/thiserror/issues/204
+// https://github.com/dtolnay/thiserror/issues/236
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("io: {0}")]
@@ -34,6 +37,8 @@ pub enum Error {
     RefOutsideRange,
     #[error("validation error: {0}")]
     Validate(String),
+    #[error("NullPointerException")]
+    NullRef,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -360,7 +365,9 @@ impl FileArray {
         D: Archive,
         D::Archived: CheckBytes<DefaultValidator<'a>>,
     {
-        assert!(key.is_not_null());
+        if key.is_null() {
+            return Err(Error::NullRef);
+        }
         let slice = slice.get(..key.as_usize()).ok_or(Error::RefOutsideRange)?;
         Ok(rkyv::check_archived_root::<D>(slice)
             .map_err(|e| Error::Validate(format!("{e}")))?)
@@ -371,7 +378,9 @@ impl FileArray {
         D: Archive,
         D::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
     {
-        assert!(key.is_not_null());
+        if key.is_null() {
+            return Err(Error::NullRef);
+        }
         let slice = self
             .mmap
             .get_mut(..key.as_usize())
@@ -426,9 +435,12 @@ mod test {
         ));
         assert!(matches!(
             arr.get::<i32>(Ref::new_u64(0)),
-            Err(Error::Validate(_))
+            Err(Error::NullRef)
         ));
-        assert!(matches!(arr.get::<()>(Ref::new_u64(0)), Ok(_)));
+        assert!(matches!(
+            arr.get::<()>(Ref::new_u64(0)),
+            Err(Error::NullRef)
+        ));
 
         let first_ref = arr.add_one(&123i32)?;
         assert!(arr.len() > HEADER_SIZE);
@@ -511,7 +523,7 @@ mod test {
         assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<usize>());
         assert_eq!(Ref::new_u64(9), FileArray::ref_to_first::<u8>());
         assert_eq!(Ref::new_u64(24), FileArray::ref_to_first::<u128>());
-        assert_eq!(Ref::new_u64(40), FileArray::ref_to_first::<MyStuff>());
+        assert_eq!(Ref::new_u64(32), FileArray::ref_to_first::<MyStuff>());
     }
 
     #[test]
