@@ -186,6 +186,7 @@ impl FileArray {
 
     #[cfg(test)]
     pub fn new_tempfile() -> Result<Self> {
+        // TODO: maybe use https://docs.rs/memfd/latest/memfd/ instead?
         let tmpf = tempfile::tempfile()?;
         Self::new_opened(tmpf)
     }
@@ -205,7 +206,8 @@ impl FileArray {
         self.len() <= HEADER_SIZE
     }
 
-    pub fn flush(&self) -> Result<()> {
+    pub fn sync_to_disk(&self) -> Result<()> {
+        // TODO: fsync on the file instead? Is there any difference?
         Ok(self.mmap.flush()?)
     }
 

@@ -103,6 +103,10 @@ where
     fn mut_children(self: Pin<&mut Self>) -> &mut Ref<Children<S>> {
         unsafe { &mut self.get_unchecked_mut().children }
     }
+
+    fn mut_removed(self: Pin<&mut Self>) -> &mut bool {
+        unsafe { &mut self.get_unchecked_mut().removed }
+    }
 }
 
 pub struct BKTree<S> {
@@ -142,8 +146,8 @@ impl<S> BKTree<S> {
         Ok(())
     }
 
-    pub fn flush(&self) -> Result<()> {
-        Ok(self.db.flush()?)
+    pub fn sync_to_disk(&self) -> Result<()> {
+        Ok(self.db.sync_to_disk()?)
     }
 }
 
@@ -152,23 +156,6 @@ where
     S: Serialize<FileArraySerializer>,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
 {
-    // pub fn count_nodes(&mut self) -> heap::Result<(usize, usize)> {
-    //     let mut alive = 0;
-    //     let mut dead = 0;
-    //     self.for_each_internal(
-    //         |_, node| {
-    //             if node.value.is_some() {
-    //                 alive += 1;
-    //             } else {
-    //                 dead += 1;
-    //             }
-    //             false
-    //         },
-    //         |_, _| (),
-    //     )?;
-    //     Ok((alive, dead))
-    // }
-
     pub fn add(&mut self, hash: Hamming, value: S) -> Result<()> {
         self.add_all([(hash, value)])
     }
@@ -261,56 +248,6 @@ where
 
         Ok(())
     }
-
-    // // TODO: is it possible to somehow make this use `for_each_internal`?
-    // pub fn find_within<F>(
-    //     &mut self,
-    //     hash: Hamming,
-    //     within: Distance,
-    //     mut visit: F,
-    // ) -> heap::Result<()>
-    // where
-    //     F: FnMut(Hamming, &S),
-    // {
-    //     if self.root().is_null() {
-    //         return Ok(());
-    //     }
-
-    //     let mut stack = vec![self.root()];
-    //     while let Some(cur_ref) = stack.pop() {
-    //         let cur_node = self.db.deref(cur_ref)?.expect("should have a value");
-    //         let dist = cur_node.hash.distance_to(hash);
-    //         if dist <= within {
-    //             if let Some(value) = &cur_node.value {
-    //                 visit(cur_node.hash, value);
-    //             }
-    //         }
-
-    //         for i in dist.saturating_sub(within)..=dist.saturating_add(within) {
-    //             if let Some(child_ref) = cur_node.children.get(&i) {
-    //                 stack.push(*child_ref);
-    //             }
-    //         }
-    //     }
-
-    //     Ok(())
-    // }
-
-    // pub fn remove_any_of<P>(&mut self, mut predicate: P) -> heap::Result<()>
-    // where
-    //     P: FnMut(Hamming, &S) -> bool,
-    // {
-    //     self.for_each_internal(
-    //         |_, node| {
-    //             node.value
-    //                 .as_ref()
-    //                 .is_some_and(|value| predicate(node.hash, value))
-    //         },
-    //         |_, node| node.value = None,
-    //     )?;
-    //     self.db.checkpoint()?;
-    //     Ok(())
-    // }
 }
 
 #[derive(Derivative, Debug, Clone, PartialEq, Eq)]
@@ -319,6 +256,7 @@ enum IterateCmd {
     #[derivative(Default)]
     Continue,
     WithinRange(RangeInclusive<Distance>),
+    #[allow(unused)] // TODO: hopefully, something in the future will need this
     Stop,
 }
 
@@ -380,14 +318,47 @@ where
     where
         F: FnMut(Hamming, &S::Archived),
     {
-        self.walk(|node| {
-            if !node.removed {
-                visit(node.hash, &node.value);
+        self.walk(|arch_node| {
+            if !arch_node.removed {
+                visit(arch_node.hash, &arch_node.value);
             }
             IterateCmd::default()
         })
     }
 
+    pub fn find_within<F>(
+        &self,
+        hash: Hamming,
+        within: Distance,
+        mut visit: F,
+    ) -> Result<()>
+    where
+        F: FnMut(Hamming, &S::Archived),
+    {
+        self.walk(|arch_node| {
+            let dist = arch_node.hash.distance_to(hash);
+            if dist <= within && !arch_node.removed {
+                visit(arch_node.hash, &arch_node.value);
+            }
+            IterateCmd::WithinRange(
+                dist.saturating_sub(within)..=dist.saturating_add(within),
+            )
+        })
+    }
+
+    pub fn remove_any_of<P>(&mut self, mut predicate: P) -> Result<()>
+    where
+        P: FnMut(Hamming, &S::Archived) -> bool,
+    {
+        self.walk_mut(|arch_node| {
+            if !arch_node.removed && predicate(arch_node.hash, &arch_node.value) {
+                *arch_node.mut_removed() = true;
+            }
+            IterateCmd::default()
+        })
+    }
+
+    // TODO: implement after `AnyValue` is supported
     // pub fn rebuild(&mut self) -> heap::Result<(usize, usize)> {
     //     let mut dead = 0;
     //     let mut alive = 0;
@@ -425,14 +396,31 @@ where
 
     //     Ok((alive, dead))
     // }
+
+    // TODO: implement after `AnyValue` support?
+    // pub fn count_nodes(&mut self) -> heap::Result<(usize, usize)> {
+    //     let mut alive = 0;
+    //     let mut dead = 0;
+    //     self.for_each_internal(
+    //         |_, node| {
+    //             if node.value.is_some() {
+    //                 alive += 1;
+    //             } else {
+    //                 dead += 1;
+    //             }
+    //             false
+    //         },
+    //         |_, _| (),
+    //     )?;
+    //     Ok((alive, dead))
+    // }
 }
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashSet, path::PathBuf};
+    use std::collections::HashSet;
 
     use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
-    use tempfile::tempfile;
 
     use super::*;
 
@@ -471,105 +459,106 @@ mod test {
             all
         );
 
-        // let mut closest = Vec::new();
-        // tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.clone()))?;
-        // closest.sort();
-        // let answer: Vec<PathBuf> = vec!["5_1".into(), "5_2".into()];
-        // assert_eq!(answer, closest);
+        let mut closest: Vec<String> = Vec::new();
+        tree.find_within(Hamming(0b101), 0, |_, val| closest.push(val.to_string()))?;
+        closest.sort();
+        let answer: Vec<String> = vec!["5_1".into(), "5_2".into()];
+        assert_eq!(answer, closest);
 
         Ok(())
     }
 
-    //     #[test]
-    //     fn remove() -> heap::Result<()> {
-    //         let mut tree = BKTree::in_memory()?;
-    //         tree.add(Hamming(0b101), value("5_1"))?;
-    //         tree.add(Hamming(0b101), value("5_2"))?;
-    //         tree.add(Hamming(0b100), value("4"))?;
+    #[test]
+    fn remove() -> Result<()> {
+        let mut tree: BKTree<Source> = create_bktree_tempfile()?;
+        tree.add(Hamming(0b101), value("5_1"))?;
+        tree.add(Hamming(0b101), value("5_2"))?;
+        tree.add(Hamming(0b100), value("4"))?;
 
-    //         let rem: HashSet<PathBuf> = HashSet::from(["5_1".into()]);
-    //         tree.remove_any_of(|_, p| rem.contains(p))?;
+        let rem: HashSet<String> = HashSet::from(["5_1".into()]);
+        tree.remove_any_of(|_, p| rem.contains(p.as_str()))?;
 
-    //         let all = contents(&mut tree)?;
+        let all = contents(&mut tree)?;
 
-    //         assert_eq!(
-    //             vec![
-    //                 (Hamming(0b100), "4".to_string()),
-    //                 (Hamming(0b101), "5_2".to_string()),
-    //             ],
-    //             all
-    //         );
+        assert_eq!(
+            vec![
+                (Hamming(0b100), "4".to_string()),
+                (Hamming(0b101), "5_2".to_string()),
+            ],
+            all
+        );
 
-    //         assert_eq!((2, 1), tree.count_nodes()?);
-    //         tree.rebuild()?;
-    //         assert_eq!((2, 0), tree.count_nodes()?);
+        // TODO: implement
+        // assert_eq!((2, 1), tree.count_nodes()?);
+        // tree.rebuild()?;
+        // assert_eq!((2, 0), tree.count_nodes()?);
 
-    //         assert_eq!(
-    //             vec![
-    //                 (Hamming(0b100), "4".to_string()),
-    //                 (Hamming(0b101), "5_2".to_string()),
-    //             ],
-    //             all
-    //         );
+        // assert_eq!(
+        //     vec![
+        //         (Hamming(0b100), "4".to_string()),
+        //         (Hamming(0b101), "5_2".to_string()),
+        //     ],
+        //     all
+        // );
 
-    //         Ok(())
-    //     }
+        Ok(())
+    }
 
-    //     #[test]
-    //     fn find_within_large() -> heap::Result<()> {
-    //         let seed: u64 = rand::random();
-    //         println!("Using seed: {}", seed);
-    //         let mut rng = SmallRng::seed_from_u64(seed);
+    #[test]
+    fn find_within_large() -> Result<()> {
+        let seed: u64 = rand::random();
+        println!("Using seed: {}", seed);
+        let mut rng = SmallRng::seed_from_u64(seed);
 
-    //         let within = 5;
-    //         let num_within = 100;
-    //         let num_dups = 30;
-    //         let total = 1_000;
+        let within = 5;
+        let num_within = 100;
+        let num_dups = 30;
+        let total = 1_000;
 
-    //         let search_hash: Hamming = rng.gen();
-    //         let indices_within: HashSet<usize> =
-    //             rand::seq::index::sample(&mut rng, total, num_within)
-    //                 .into_iter()
-    //                 .collect();
+        let search_hash: Hamming = rng.gen();
+        let indices_within: HashSet<usize> =
+            rand::seq::index::sample(&mut rng, total, num_within)
+                .into_iter()
+                .collect();
 
-    //         let mut tree = BKTree::in_memory()?;
-    //         let mut key = Vec::new();
-    //         for i in 0..total {
-    //             let hash = if indices_within.contains(&i) {
-    //                 search_hash.random_within(&mut rng, within)
-    //             } else {
-    //                 search_hash.random_outside(&mut rng, within)
-    //             };
+        let mut tree: BKTree<Source> = create_bktree_tempfile()?;
+        let mut key = Vec::new();
+        for i in 0..total {
+            let hash = if indices_within.contains(&i) {
+                search_hash.random_within(&mut rng, within)
+            } else {
+                search_hash.random_outside(&mut rng, within)
+            };
 
-    //             tree.add(hash, value(i.to_string()))?;
+            tree.add(hash, value(i.to_string()))?;
 
-    //             if search_hash.distance_to(hash) <= within {
-    //                 key.push(hash);
-    //             }
-    //         }
+            if search_hash.distance_to(hash) <= within {
+                key.push(hash);
+            }
+        }
 
-    //         {
-    //             let mut dups = Vec::with_capacity(num_dups);
-    //             for hash in key.choose_multiple(&mut rng, num_dups) {
-    //                 tree.add(*hash, value("dup"))?;
-    //                 dups.push(*hash);
-    //             }
-    //             key.extend(dups);
-    //         }
+        {
+            let mut dups = Vec::with_capacity(num_dups);
+            for hash in key.choose_multiple(&mut rng, num_dups) {
+                tree.add(*hash, value("dup"))?;
+                dups.push(*hash);
+            }
+            key.extend(dups);
+        }
 
-    //         assert_eq!(num_dups + num_within, key.len());
+        assert_eq!(num_dups + num_within, key.len());
 
-    //         let mut closest = Vec::new();
-    //         tree.find_within(search_hash, within, |hash, _| closest.push(hash))?;
+        let mut closest = Vec::new();
+        tree.find_within(search_hash, within, |hash, _| closest.push(hash))?;
 
-    //         assert_eq!(key.len(), closest.len());
+        assert_eq!(key.len(), closest.len());
 
-    //         closest.sort();
-    //         key.sort();
-    //         assert_eq!(key, closest);
+        closest.sort();
+        key.sort();
+        assert_eq!(key, closest);
 
-    //         Ok(())
-    //     }
+        Ok(())
+    }
 }
 
 // TODO: extract into its own file and fix imports
