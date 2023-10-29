@@ -1,6 +1,3 @@
-pub mod hash_images;
-pub mod tree_src_types;
-
 use std::{fs::File, path::Path};
 
 use color_eyre::eyre::{self, Context};

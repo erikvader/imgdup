@@ -1,4 +1,4 @@
-use imgdup::heap::{self, Heap, HeapBuilder, Ref, Result};
+use imgdup::bktree::sqlite::heap::{self, Heap, HeapBuilder, Ref, Result};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tempfile::{NamedTempFile, TempPath};

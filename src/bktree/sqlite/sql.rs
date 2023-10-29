@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::{io::Write, path::Path};
 
-use super::Result;
+use super::heap::Result;
 use const_format::concatcp;
 use rusqlite::{blob::ZeroBlob, Connection, DatabaseName, OptionalExtension, ToSql};
 use serde::{de::DeserializeOwned, Serialize};

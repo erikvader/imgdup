@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
 use color_eyre::eyre;
-use imgdup::frame_extractor::FrameExtractor;
+use imgdup::frame_extractor::frame_extractor::FrameExtractor;
 use rand::{thread_rng, Rng};
 
 #[derive(Parser)]

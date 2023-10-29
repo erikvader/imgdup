@@ -13,21 +13,23 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
-    bktree::BKTree,
-    common::{
+    bin_common::{
         hash_images::{read_ignored, HashCli, HashConf},
-        init_eyre, init_logger,
-        tree_src_types::{Mirror, VidSrc},
+        init::{init_eyre, init_logger},
     },
-    frame_extractor::{timestamp::Timestamp, FrameExtractor},
-    fsutils::{all_files, is_simple_relative, read_optional_file},
+    bktree::{
+        source_types::video_source::{Mirror, VidSrc},
+        sqlite::bktree::BKTree,
+    },
+    frame_extractor::{frame_extractor::FrameExtractor, timestamp::Timestamp},
     imghash::{
-        self,
         hamming::{Distance, Hamming},
+        imghash,
     },
-    imgutils,
-    repo::{LazyEntry, Repo},
-    work_queue::WorkQueue,
+    utils::fsutils::{all_files, is_simple_relative, read_optional_file},
+    utils::imgutils,
+    utils::repo::{LazyEntry, Repo},
+    utils::work_queue::WorkQueue,
 };
 
 #[derive(Parser, Debug)]

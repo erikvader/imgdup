@@ -7,12 +7,11 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup::{
-    bktree::BKTree,
-    common::{
+    bin_common::{
         hash_images::{read_ignored, HashCli, HashConf},
-        init_eyre, init_logger,
-        tree_src_types::VidSrc,
+        init::{init_eyre, init_logger},
     },
+    bktree::{source_types::video_source::VidSrc, sqlite::bktree::BKTree},
 };
 
 #[derive(Parser, Debug)]

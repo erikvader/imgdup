@@ -1,9 +1,9 @@
-use imgdup::{heap, imghash::hamming::Hamming};
+use imgdup::bktree::sqlite::heap;
+use imgdup::{bktree::sqlite::bktree::BKTree, imghash::hamming::Hamming};
 use tempfile::{NamedTempFile, TempPath};
 
 #[test]
 fn bktree_crash() -> heap::Result<()> {
-    use imgdup::bktree::BKTree;
     let tmp_path = tmp_path();
 
     let mut tree = BKTree::<()>::from_file(&tmp_path)?;

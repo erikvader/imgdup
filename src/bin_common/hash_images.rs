@@ -3,14 +3,12 @@ use std::path::Path;
 use clap::Args;
 use color_eyre::eyre::{self, Context};
 
-use crate::{
-    fsutils::all_files,
-    imghash::{
-        self,
-        hamming::{Distance, Hamming},
-    },
-    imgutils::{self, RemoveBordersCli, RemoveBordersConf},
+use crate::imghash::{
+    hamming::{Distance, Hamming},
+    imghash,
 };
+use crate::utils::fsutils::all_files;
+use crate::utils::imgutils::{self, RemoveBordersCli, RemoveBordersConf};
 
 pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 23;
 

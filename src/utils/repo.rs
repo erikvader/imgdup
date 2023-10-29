@@ -8,7 +8,7 @@ use std::{
 use color_eyre::eyre::{self, Context}; // TODO: use custom error type instead
 use image::{ImageBuffer, ImageOutputFormat};
 
-use crate::fsutils::is_basename;
+use super::fsutils;
 
 const ENTRY_PADDING: usize = 4;
 
@@ -78,7 +78,7 @@ impl Entry {
 
     pub fn sub_entry(&mut self, name: impl AsRef<Path>) -> eyre::Result<Self> {
         let name = name.as_ref();
-        assert!(is_basename(name));
+        assert!(fsutils::is_basename(name));
         let sub_path = self.next_path(name);
         fs::create_dir(&sub_path).wrap_err("could not create the dir")?;
         Ok(Self {
@@ -96,7 +96,7 @@ impl Entry {
         F: FnOnce(&mut BufWriter<File>) -> eyre::Result<()>,
     {
         let name = name.as_ref();
-        assert!(is_basename(name));
+        assert!(fsutils::is_basename(name));
         let file_path = self.next_path(name);
         let file = fs::OpenOptions::new()
             .write(true)
@@ -117,9 +117,9 @@ impl Entry {
         target: impl AsRef<Path>,
     ) -> eyre::Result<()> {
         let link_name = link_name.as_ref();
-        assert!(is_basename(link_name));
+        assert!(fsutils::is_basename(link_name));
         let link_name = self.next_path(link_name);
-        crate::fsutils::symlink(target, link_name).wrap_err("failed to create link")?;
+        fsutils::symlink(target, link_name).wrap_err("failed to create link")?;
         Ok(())
     }
 
@@ -130,10 +130,9 @@ impl Entry {
         target: impl AsRef<Path>,
     ) -> eyre::Result<()> {
         let link_name = link_name.as_ref();
-        assert!(is_basename(link_name));
+        assert!(fsutils::is_basename(link_name));
         let link_name = self.next_path(link_name);
-        crate::fsutils::symlink_relative(target, link_name)
-            .wrap_err("failed to create link")?;
+        fsutils::symlink_relative(target, link_name).wrap_err("failed to create link")?;
         Ok(())
     }
 
@@ -148,7 +147,7 @@ impl Entry {
         C: std::ops::Deref<Target = [P::Subpixel]>,
     {
         let jpg_name = jpg_name.as_ref();
-        assert!(is_basename(jpg_name));
+        assert!(fsutils::is_basename(jpg_name));
         let jpg_name = Path::new(jpg_name).with_extension("jpg");
         self.create_file(jpg_name, |w| {
             image
@@ -163,7 +162,7 @@ impl Entry {
         contents: impl AsRef<str>,
     ) -> eyre::Result<()> {
         let txt_name = txt_name.as_ref();
-        assert!(is_basename(txt_name));
+        assert!(fsutils::is_basename(txt_name));
         let txt_name = Path::new(txt_name).with_extension("txt");
         self.create_file(txt_name, |w| {
             w.write_all(contents.as_ref().as_bytes())
@@ -197,7 +196,7 @@ where
     F: Fn(&str) -> eyre::Result<u32>,
 {
     let all_files: Vec<_> =
-        crate::fsutils::all_files([dir]).wrap_err("failed to list the dir")?;
+        fsutils::all_files([dir]).wrap_err("failed to list the dir")?;
     let next_entry = all_files
         .into_iter()
         .try_fold(None, |maximum, path| -> eyre::Result<Option<u32>> {

@@ -7,12 +7,15 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
-    bktree::BKTree,
-    common::{hash_images, init_eyre, init_logger, tree_src_types::VidSrc},
-    frame_extractor::FrameExtractor,
-    fsutils::{is_simple_relative, remove_dot_dot},
+    bin_common::{
+        hash_images,
+        init::{init_eyre, init_logger},
+    },
+    bktree::{source_types::video_source::VidSrc, sqlite::bktree::BKTree},
+    frame_extractor::frame_extractor::FrameExtractor,
     imghash::hamming::{Distance, Hamming},
-    repo::Entry,
+    utils::fsutils::{is_simple_relative, remove_dot_dot},
+    utils::repo::Entry,
 };
 
 #[derive(Parser, Debug)]
