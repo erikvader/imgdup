@@ -1,7 +1,10 @@
+mod common;
+
 use imgdup::bktree::sqlite::heap::{self, Heap, HeapBuilder, Ref, Result};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use tempfile::{NamedTempFile, TempPath};
+
+use crate::common::{remove_first, tmp_file};
 
 struct List {
     head: Ref,
@@ -95,7 +98,7 @@ impl List {
 
 #[test]
 fn test_write_to_file() -> Result<()> {
-    let tmp_path = tmp_path();
+    let tmp_path = tmp_file();
 
     let mut db = Heap::<Node, Root>::new_from_file(&tmp_path)?;
     let r1 = db.allocate(Node::new(5))?;
@@ -145,7 +148,7 @@ fn test_linked_list_remove() -> Result<()> {
 
 #[test]
 fn test_linked_list_stress_no_blocks() -> Result<()> {
-    let tmp_path = tmp_path();
+    let tmp_path = tmp_file();
     let mut db: Heap<Node, Root> = HeapBuilder::new()
         .cache_capacity(20)
         .dirtyness_limit(5)
@@ -169,7 +172,7 @@ fn test_linked_list_stress_no_blocks() -> Result<()> {
 
 #[test]
 fn test_linked_list_stress() -> Result<()> {
-    let tmp_path = tmp_path();
+    let tmp_path = tmp_file();
     let mut db: Heap<Node, Root> = HeapBuilder::new()
         .cache_capacity(20)
         .dirtyness_limit(5)
@@ -224,7 +227,7 @@ fn list_stress(db: &mut Heap<Node, Root>) -> Result<(List, Vec<i32>)> {
 
 #[test]
 fn test_linked_list_crash() -> Result<()> {
-    let tmp_path = tmp_path();
+    let tmp_path = tmp_file();
     let mut db: Heap<Node, Root> = Heap::new_from_file(&tmp_path)?;
 
     let mut list = List::new();
@@ -241,20 +244,4 @@ fn test_linked_list_crash() -> Result<()> {
     assert_eq!(vec![1], list.to_vec(&mut db)?);
 
     Ok(())
-}
-
-fn remove_first(vec: &mut Vec<i32>, remove: i32) {
-    if let Some(i) = vec.iter().position(|i| *i == remove) {
-        vec.remove(i);
-    }
-}
-
-// TODO: figure out how to share this with other integration tests
-fn tmp_path() -> TempPath {
-    match option_env!("CARGO_TARGET_TMPDIR") {
-        None => NamedTempFile::new(),
-        Some(dir) => NamedTempFile::new_in(dir),
-    }
-    .expect("could not create temporary file")
-    .into_temp_path()
 }

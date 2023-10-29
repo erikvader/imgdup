@@ -1,6 +1,8 @@
-use std::{path::PathBuf, process::Stdio, time::Duration};
+mod common;
 
+use common::cargo_tmpdir;
 use imgdup::frame_extractor::{self, FrameExtractor};
+use std::{path::PathBuf, process::Stdio, time::Duration};
 
 const TEST_VIDEO_FRAMES: usize = 250;
 const TEST_VIDEO_LENGTH_SEC: u64 = 10;
@@ -31,20 +33,19 @@ fn test_total_frames() -> frame_extractor::Result<()> {
 }
 
 fn create_test_video() -> PathBuf {
-    let tmpdir =
-        PathBuf::from(option_env!("CARGO_TARGET_TMPDIR").unwrap()).join("testvideo.mkv");
+    let tmpvideo = cargo_tmpdir().join("testvideo.mkv");
 
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        std::fs::remove_file(&tmpdir).ok();
+        std::fs::remove_file(&tmpvideo).ok();
         std::process::Command::new("ffmpeg")
             .args([
                 "-f",
                 "lavfi",
                 "-i",
                 "testsrc=duration=10:rate=25",
-                tmpdir.as_os_str().to_str().expect("no probs, probably"),
+                tmpvideo.as_os_str().to_str().expect("no probs, probably"),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -53,5 +54,5 @@ fn create_test_video() -> PathBuf {
             .expect("failed to execute ffmpeg");
     });
 
-    tmpdir
+    tmpvideo
 }

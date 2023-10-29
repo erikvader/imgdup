@@ -1,10 +1,12 @@
+mod common;
+
+use common::tmp_file;
 use imgdup::bktree::sqlite::heap;
 use imgdup::{bktree::sqlite::bktree::BKTree, imghash::hamming::Hamming};
-use tempfile::{NamedTempFile, TempPath};
 
 #[test]
 fn bktree_crash() -> heap::Result<()> {
-    let tmp_path = tmp_path();
+    let tmp_path = tmp_file();
 
     let mut tree = BKTree::<()>::from_file(&tmp_path)?;
     tree.add(Hamming(69), ())?;
@@ -37,14 +39,4 @@ fn bktree_crash() -> heap::Result<()> {
     tree.close()?;
 
     Ok(())
-}
-
-// TODO: figure out how to share this with other integration tests
-fn tmp_path() -> TempPath {
-    match option_env!("CARGO_TARGET_TMPDIR") {
-        None => NamedTempFile::new(),
-        Some(dir) => NamedTempFile::new_in(dir),
-    }
-    .expect("could not create temporary file")
-    .into_temp_path()
 }
