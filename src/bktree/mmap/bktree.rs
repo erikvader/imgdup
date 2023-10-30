@@ -19,8 +19,6 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub struct AnyValue(str); // TODO: panic if its archived value is read or something cool
-
 #[derive(Serialize, Archive, Derivative)]
 #[archive(check_bytes)]
 #[derivative(Default(bound = ""))]
@@ -422,6 +420,7 @@ mod test {
 
     use super::*;
 
+    // TODO: skapa under source_types, men bara under cfg(test)
     type Source = String;
     fn value(path: impl Into<Source>) -> Source {
         path.into()
