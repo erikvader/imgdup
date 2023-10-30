@@ -120,7 +120,13 @@ impl<S> BKTree<S> {
 
     fn new(mut db: FileArray) -> Result<Self> {
         if db.is_empty() {
-            db.add_one::<Meta<S>>(&Meta::default())?;
+            let meta_ref = db.add_one::<Meta<S>>(&Meta::default())?;
+            assert_eq!(
+                meta_ref,
+                // SAFETY: the ref is not actually used, only compared
+                unsafe { FileArray::ref_to_first::<Meta<S>>() },
+                "The header is reachable with `ref_to_first`"
+            );
         }
 
         Ok(Self {
@@ -130,13 +136,15 @@ impl<S> BKTree<S> {
     }
 
     fn root(&self) -> Result<Ref<BKNode<S>>> {
-        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
+        // SAFETY: the constructor has made sure this ref is valid
+        let meta_ref = unsafe { FileArray::ref_to_first::<Meta<S>>() };
         let meta = self.db.get::<Meta<S>>(meta_ref)?;
         Ok(meta.root)
     }
 
     fn set_root(&mut self, new_root: Ref<BKNode<S>>) -> Result<()> {
-        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
+        // SAFETY: the constructor has made sure this ref is valid
+        let meta_ref = unsafe { FileArray::ref_to_first::<Meta<S>>() };
         let meta = self.db.get_mut::<Meta<S>>(meta_ref)?;
         meta.root().set(new_root);
         Ok(())
