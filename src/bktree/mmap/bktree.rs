@@ -26,6 +26,9 @@ struct Meta<S> {
     #[derivative(Default(value = "Ref::null()"))]
     root: Ref<BKNode<S>>,
     // TODO: save some identifier for S
+    // TODO: somehow store the version of this struct itself? Need two layers of headers?
+    // The first layer has the version and points to the other header (this one)? Or use
+    // repr(C) and store the version as the first field?
 }
 
 impl<S> ArchivedMeta<S> {
@@ -105,6 +108,7 @@ where
     }
 }
 
+// TODO: always require PartialSource
 pub struct BKTree<S> {
     db: FileArray,
     _src: std::marker::PhantomData<S>,
@@ -123,11 +127,12 @@ impl<S> BKTree<S> {
             let meta_ref = db.add_one::<Meta<S>>(&Meta::default())?;
             assert_eq!(
                 meta_ref,
-                // SAFETY: the ref is not actually used, only compared
-                unsafe { FileArray::ref_to_first::<Meta<S>>() },
+                FileArray::ref_to_first::<Meta<S>>(),
                 "The header is reachable with `ref_to_first`"
             );
         }
+
+        // TODO: make sure the identifier of `S` is the same as the one in `Meta`
 
         Ok(Self {
             db,
@@ -136,15 +141,13 @@ impl<S> BKTree<S> {
     }
 
     fn root(&self) -> Result<Ref<BKNode<S>>> {
-        // SAFETY: the constructor has made sure this ref is valid
-        let meta_ref = unsafe { FileArray::ref_to_first::<Meta<S>>() };
+        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
         let meta = self.db.get::<Meta<S>>(meta_ref)?;
         Ok(meta.root)
     }
 
     fn set_root(&mut self, new_root: Ref<BKNode<S>>) -> Result<()> {
-        // SAFETY: the constructor has made sure this ref is valid
-        let meta_ref = unsafe { FileArray::ref_to_first::<Meta<S>>() };
+        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
         let meta = self.db.get_mut::<Meta<S>>(meta_ref)?;
         meta.root().set(new_root);
         Ok(())

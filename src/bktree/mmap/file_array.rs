@@ -255,21 +255,14 @@ impl FileArray {
     /// Ref to the first element of type `T`, whose serialized size must be
     /// `size_of<T::Archived>`, i.e., should not have stuff like strings cuz they get
     /// serialized before `T`, making it hard to get the position of `T`.
-    pub unsafe fn ref_to_first<T>() -> Ref<T>
+    pub fn ref_to_first<T>() -> Ref<T>
     where
         T: Archive,
     {
-        // No instructions inside this function are unsafe, but the result of it is.
-        fn inner<T>() -> Ref<T>
-        where
-            T: Archive,
-        {
-            let pos = HEADER_SIZE;
-            let align = std::mem::align_of::<T::Archived>();
-            let align_diff = (align - (pos % align)) % align;
-            Ref::new_usize(pos + align_diff + std::mem::size_of::<T::Archived>())
-        }
-        inner()
+        let pos = HEADER_SIZE;
+        let align = std::mem::align_of::<T::Archived>();
+        let align_diff = (align - (pos % align)) % align;
+        Ref::new_usize(pos + align_diff + std::mem::size_of::<T::Archived>())
     }
 
     fn with_file<F, R>(&mut self, appl: F) -> R
@@ -455,7 +448,7 @@ mod test {
 
         let first = arr.get::<i32>(first_ref)?;
         assert_eq!(&123, first);
-        assert_eq!(first_ref, unsafe { FileArray::ref_to_first::<i32>() });
+        assert_eq!(first_ref, FileArray::ref_to_first::<i32>());
         assert_eq!(first_ref.as_usize(), arr.len());
 
         Ok(())
@@ -518,7 +511,7 @@ mod test {
         assert!(arr.len() <= arr.mmap.len());
         assert_eq!(&1u32, arr.get::<u32>(ref_1)?);
         assert_eq!(&2i64, arr.get::<i64>(ref_2)?);
-        assert_eq!(ref_1, unsafe { FileArray::ref_to_first::<u32>() });
+        assert_eq!(ref_1, FileArray::ref_to_first::<u32>());
 
         Ok(())
     }
@@ -526,13 +519,11 @@ mod test {
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn alignment_x86_64() {
-        unsafe {
-            assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<u64>());
-            assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<usize>());
-            assert_eq!(Ref::new_u64(9), FileArray::ref_to_first::<u8>());
-            assert_eq!(Ref::new_u64(24), FileArray::ref_to_first::<u128>());
-            assert_eq!(Ref::new_u64(32), FileArray::ref_to_first::<MyStuff>());
-        }
+        assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<u64>());
+        assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<usize>());
+        assert_eq!(Ref::new_u64(9), FileArray::ref_to_first::<u8>());
+        assert_eq!(Ref::new_u64(24), FileArray::ref_to_first::<u128>());
+        assert_eq!(Ref::new_u64(32), FileArray::ref_to_first::<MyStuff>());
     }
 
     #[test]
@@ -545,7 +536,7 @@ mod test {
 
         assert!(buf.len() >= HEADER_SIZE + std::mem::size_of::<u8>());
 
-        let pos = unsafe { FileArray::ref_to_first::<u8>() }.as_usize();
+        let pos = FileArray::ref_to_first::<u8>().as_usize();
         assert_eq!(123u8, buf[pos - 1]);
 
         Ok(())
