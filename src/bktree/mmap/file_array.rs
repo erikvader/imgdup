@@ -32,7 +32,7 @@ pub enum Error {
     Serializer(
         #[from]
         // TODO: why doesn't `<FileArraySerializer as Fallible>::Error` work?
-        CompositeSerializerError<io::Error, AllocScratchError, std::convert::Infallible>,
+        FileArraySerializerError,
     ),
     #[error("ref outside of range")]
     RefOutsideRange,
@@ -43,6 +43,10 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub type FileArraySerializerError =
+    CompositeSerializerError<io::Error, AllocScratchError, std::convert::Infallible>;
+
 pub type FileArraySerializer = CompositeSerializer<
     WriteSerializer<BufWriter<File>>,
     FallbackScratch<HeapScratch<8192>, AllocScratch>,

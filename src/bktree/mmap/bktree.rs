@@ -1,7 +1,9 @@
+use std::borrow::Borrow;
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::pin::Pin;
 
+use super::deferred_box::{self, DeferredBox, DeferredBoxSerializer};
 use super::entry::*;
 use derivative::Derivative;
 use rkyv::validation::validators::DefaultValidator;
@@ -13,8 +15,10 @@ use crate::imghash::hamming::{Distance, Hamming};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
+    #[error("file array: {0}")]
     FileArray(#[from] file_array::Error),
+    #[error("deferred box: {0}")]
+    DeferredBox(#[from] deferred_box::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -22,17 +26,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Serialize, Archive, Derivative)]
 #[archive(check_bytes)]
 #[derivative(Default(bound = ""))]
-struct Meta<S> {
+struct Meta {
     #[derivative(Default(value = "Ref::null()"))]
-    root: Ref<BKNode<S>>,
+    root: Ref<BKNode>,
     // TODO: save some identifier for S
     // TODO: somehow store the version of this struct itself? Need two layers of headers?
     // The first layer has the version and points to the other header (this one)? Or use
     // repr(C) and store the version as the first field?
 }
 
-impl<S> ArchivedMeta<S> {
-    fn root(self: Pin<&mut Self>) -> Pin<&mut Ref<BKNode<S>>> {
+impl ArchivedMeta {
+    fn root(self: Pin<&mut Self>) -> Pin<&mut Ref<BKNode>> {
         unsafe { self.map_unchecked_mut(|m| &mut m.root) }
     }
 }
@@ -41,21 +45,21 @@ const DEFAULT_CHILDREN_LIMIT: usize = 20;
 
 #[derive(Serialize, Archive)]
 #[archive(check_bytes)]
-pub(super) struct BKNode<S> {
+pub(super) struct BKNode {
     hash: Hamming,
-    value: S, // TODO: RefBox? DynRef? Utilise the trait object support?
+    value: DeferredBox,
     removed: bool,
-    children: Ref<Children<S>>,
+    children: Ref<Children>,
 }
 
 #[derive(Serialize, Archive)]
 #[archive(check_bytes)]
-pub(super) struct Children<S> {
-    entries: Vec<Entry<S>>,
-    next_sibling: Ref<Children<S>>,
+pub(super) struct Children {
+    entries: Vec<Entry>,
+    next_sibling: Ref<Children>,
 }
 
-impl<S> Children<S> {
+impl Children {
     fn new(limit: usize) -> Self {
         assert!(limit > 0);
         Self {
@@ -64,15 +68,15 @@ impl<S> Children<S> {
         }
     }
 
-    fn new_initial(limit: usize, initial_element: Entry<S>) -> Self {
+    fn new_initial(limit: usize, initial_element: Entry) -> Self {
         let mut selff = Self::new(limit);
         *selff.entries.first_mut().expect("the vec is not empty") = initial_element;
         selff
     }
 }
 
-impl<S> BKNode<S> {
-    fn new(hash: Hamming, value: S) -> Self {
+impl BKNode {
+    fn new(hash: Hamming, value: DeferredBox) -> Self {
         Self {
             hash,
             value,
@@ -82,24 +86,18 @@ impl<S> BKNode<S> {
     }
 }
 
-impl<S> ArchivedChildren<S>
-where
-    S: Archive,
-{
-    fn pin_mut_entries(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<ArchivedEntry<S>>> {
+impl ArchivedChildren {
+    fn pin_mut_entries(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<ArchivedEntry>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.entries) }
     }
 
-    fn mut_next_sibling(self: Pin<&mut Self>) -> &mut Ref<Children<S>> {
+    fn mut_next_sibling(self: Pin<&mut Self>) -> &mut Ref<Children> {
         unsafe { &mut self.get_unchecked_mut().next_sibling }
     }
 }
 
-impl<S> ArchivedBKNode<S>
-where
-    S: Archive,
-{
-    fn mut_children(self: Pin<&mut Self>) -> &mut Ref<Children<S>> {
+impl ArchivedBKNode {
+    fn mut_children(self: Pin<&mut Self>) -> &mut Ref<Children> {
         unsafe { &mut self.get_unchecked_mut().children }
     }
 
@@ -124,10 +122,11 @@ impl<S> BKTree<S> {
 
     fn new(mut db: FileArray) -> Result<Self> {
         if db.is_empty() {
+            // TODO: stop using default
             let meta_ref = db.add_one(Meta::default())?;
             assert_eq!(
                 meta_ref,
-                FileArray::ref_to_first::<Meta<S>>(),
+                FileArray::ref_to_first::<Meta>(),
                 "The header is reachable with `ref_to_first`"
             );
         }
@@ -140,15 +139,15 @@ impl<S> BKTree<S> {
         })
     }
 
-    fn root(&self) -> Result<Ref<BKNode<S>>> {
-        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
-        let meta = self.db.get::<Meta<S>>(meta_ref)?;
+    fn root(&self) -> Result<Ref<BKNode>> {
+        let meta_ref = FileArray::ref_to_first::<Meta>();
+        let meta = self.db.get::<Meta>(meta_ref)?;
         Ok(meta.root)
     }
 
-    fn set_root(&mut self, new_root: Ref<BKNode<S>>) -> Result<()> {
-        let meta_ref = FileArray::ref_to_first::<Meta<S>>();
-        let meta = self.db.get_mut::<Meta<S>>(meta_ref)?;
+    fn set_root(&mut self, new_root: Ref<BKNode>) -> Result<()> {
+        let meta_ref = FileArray::ref_to_first::<Meta>();
+        let meta = self.db.get_mut::<Meta>(meta_ref)?;
         meta.root().set(new_root);
         Ok(())
     }
@@ -160,45 +159,55 @@ impl<S> BKTree<S> {
 
 impl<S> BKTree<S>
 where
-    S: Serialize<FileArraySerializer>,
+    S: Serialize<DeferredBoxSerializer>,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
 {
-    pub fn add(&mut self, hash: Hamming, value: S) -> Result<()> {
+    pub fn add<B>(&mut self, hash: Hamming, value: B) -> Result<()>
+    where
+        B: Borrow<S>,
+    {
         self.add_all([(hash, value)])
     }
 
-    pub fn add_all(
+    pub fn add_all<B>(
         &mut self,
-        items: impl IntoIterator<Item = (Hamming, S)>,
-    ) -> Result<()> {
+        items: impl IntoIterator<Item = (Hamming, B)>,
+    ) -> Result<()>
+    where
+        B: Borrow<S>,
+    {
         let mut root = self.root()?;
         let mut items = items.into_iter();
 
         if let Some((hash, value)) = items.next() {
             if root.is_null() {
-                root = self.db.add_one(&BKNode::new(hash, value))?;
+                let value_box = DeferredBox::new(value)?;
+                root = self.db.add_one(BKNode::new(hash, value_box))?;
                 self.set_root(root)?;
             } else {
-                self.add_internal(root, hash, value)?;
+                self.add_internal(root, hash, value.borrow())?;
             }
         }
 
         for (hash, value) in items {
-            self.add_internal(root, hash, value)?;
+            self.add_internal(root, hash, value.borrow())?;
         }
         Ok(())
     }
 
     fn add_internal(
         &mut self,
-        mut cur_node_ref: Ref<BKNode<S>>,
+        mut cur_node_ref: Ref<BKNode>,
         hash: Hamming,
-        value: S, // TODO: take a `B: Borrow<S>`? To allow taking stuff by reference and value
+        value: &S,
     ) -> Result<()> {
         assert!(cur_node_ref.is_not_null());
 
-        let new_node = BKNode::new(hash, value);
-        let new_node_ref = self.db.add_one(&new_node)?;
+        let new_node_ref = {
+            let value_box = DeferredBox::new::<_, S>(value)?;
+            let new_node = BKNode::new(hash, value_box);
+            self.db.add_one(new_node)?
+        };
 
         'nodes: loop {
             let cur_node = self.db.get(cur_node_ref)?;
@@ -211,7 +220,7 @@ where
 
             if cur_node.children.is_null() {
                 let new_children =
-                    Children::<S>::new_initial(DEFAULT_CHILDREN_LIMIT, new_entry);
+                    Children::new_initial(DEFAULT_CHILDREN_LIMIT, new_entry);
                 let new_children_ref = self.db.add_one(&new_children)?;
                 let cur_node = self.db.get_mut(cur_node_ref)?;
                 assert_eq!(Ref::null(), cur_node.children);
@@ -236,7 +245,7 @@ where
                         match entry_add(&mut entries, new_entry.clone()) {
                             Some(_) => (),
                             None => {
-                                let new_sibling = Children::<S>::new_initial(
+                                let new_sibling = Children::new_initial(
                                     DEFAULT_CHILDREN_LIMIT,
                                     new_entry,
                                 );
@@ -257,13 +266,11 @@ where
     }
 }
 
-#[derive(Derivative, Debug, Clone, PartialEq, Eq)]
-#[derivative(Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum IterateCmd {
-    #[derivative(Default)]
     Continue,
     WithinRange(RangeInclusive<Distance>),
-    #[allow(unused)] // TODO: hopefully, something in the future will need this
+    #[allow(unused)] // TODO: hopefully something in the future will need this
     Stop,
 }
 
@@ -271,7 +278,7 @@ macro_rules! impl_walk {
     ($fun_name:ident, $self_type:ty, $visit_arg:ty, $db_get:ident, $visit_prep:expr) => {
         fn $fun_name<F>(self: $self_type, mut visit: F) -> Result<()>
         where
-            F: FnMut($visit_arg) -> IterateCmd,
+            F: FnMut($visit_arg) -> Result<IterateCmd>,
         {
             let mut stack = Vec::new();
             {
@@ -283,7 +290,7 @@ macro_rules! impl_walk {
 
             while let Some(cur_ref) = stack.pop() {
                 let mut cur_node = self.db.$db_get(cur_ref)?;
-                let dist_range = match visit($visit_prep(&mut cur_node)) {
+                let dist_range = match visit($visit_prep(&mut cur_node))? {
                     IterateCmd::Continue => Distance::MIN..=Distance::MAX,
                     IterateCmd::WithinRange(range) => range,
                     IterateCmd::Stop => break,
@@ -311,15 +318,16 @@ impl<S> BKTree<S>
 where
     S: Archive,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
+    // TODO: Source bound
 {
     impl_walk!(
         walk_mut,
         &mut Self,
-        Pin<&mut ArchivedBKNode<S>>,
+        Pin<&mut ArchivedBKNode>,
         get_mut,
         Pin::as_mut
     );
-    impl_walk!(walk, &Self, &ArchivedBKNode<S>, get, std::convert::identity);
+    impl_walk!(walk, &Self, &ArchivedBKNode, get, std::convert::identity);
 
     pub fn for_each<F>(&self, mut visit: F) -> Result<()>
     where
@@ -327,9 +335,10 @@ where
     {
         self.walk(|arch_node| {
             if !arch_node.removed {
-                visit(arch_node.hash, &arch_node.value);
+                let value = arch_node.value.get::<S>()?;
+                visit(arch_node.hash, value);
             }
-            IterateCmd::default()
+            Ok(IterateCmd::Continue)
         })
     }
 
@@ -345,11 +354,12 @@ where
         self.walk(|arch_node| {
             let dist = arch_node.hash.distance_to(hash);
             if dist <= within && !arch_node.removed {
-                visit(arch_node.hash, &arch_node.value);
+                let value = arch_node.value.get::<S>()?;
+                visit(arch_node.hash, value);
             }
-            IterateCmd::WithinRange(
+            Ok(IterateCmd::WithinRange(
                 dist.saturating_sub(within)..=dist.saturating_add(within),
-            )
+            ))
         })
     }
 
@@ -358,10 +368,11 @@ where
         P: FnMut(Hamming, &S::Archived) -> bool,
     {
         self.walk_mut(|arch_node| {
-            if !arch_node.removed && predicate(arch_node.hash, &arch_node.value) {
+            let value = arch_node.value.get::<S>()?;
+            if !arch_node.removed && predicate(arch_node.hash, value) {
                 *arch_node.mut_removed() = true;
             }
-            IterateCmd::default()
+            Ok(IterateCmd::Continue)
         })
     }
 
