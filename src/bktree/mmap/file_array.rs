@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
     path::Path,
@@ -315,16 +316,17 @@ impl FileArray {
         Ok(())
     }
 
-    pub fn add<'i, It, S>(&mut self, items: It) -> Result<Vec<Ref<S>>>
+    pub fn add<It, B, S>(&mut self, items: It) -> Result<Vec<Ref<S>>>
     where
-        It: IntoIterator<Item = &'i S>,
-        S: Serialize<FileArraySerializer> + 'i,
+        It: IntoIterator<Item = B>,
+        B: Borrow<S>,
+        S: Serialize<FileArraySerializer>,
     {
         let mut refs: Vec<Ref<S>> = Vec::new();
 
         for item in items.into_iter() {
             // TODO: make sure sync_to_disk always is called if this fails?
-            self.seri.serialize_value(item)?;
+            self.seri.serialize_value(item.borrow())?;
             refs.push(Ref::new_usize(self.seri.pos()));
         }
 
@@ -342,8 +344,9 @@ impl FileArray {
         Ok(refs)
     }
 
-    pub fn add_one<S>(&mut self, item: &S) -> Result<Ref<S>>
+    pub fn add_one<B, S>(&mut self, item: B) -> Result<Ref<S>>
     where
+        B: Borrow<S>,
         S: Serialize<FileArraySerializer>,
     {
         // TODO: write directly into the mmap using `BufferSerializer` or something?
@@ -416,7 +419,7 @@ mod test {
         let mut arr = FileArray::new_tempfile()?;
         let len_before = arr.len();
         let mmap_len_before = arr.mmap.len();
-        arr.add([] as [&i32; 0])?;
+        arr.add::<[&i32; 0], &i32, i32>([] as [&i32; 0])?;
         assert_eq!(len_before, arr.len());
         assert_eq!(mmap_len_before, arr.mmap.len());
         Ok(())
@@ -488,6 +491,18 @@ mod test {
         assert_eq!(&100, arr.get::<i32>(refs[2])?);
         assert_eq!(refs.last().unwrap().as_usize(), arr.len());
 
+        let refs = arr.add([2i32, 20, 200])?;
+        assert_eq!(&2, arr.get::<i32>(refs[0])?);
+        assert_eq!(&20, arr.get::<i32>(refs[1])?);
+        assert_eq!(&200, arr.get::<i32>(refs[2])?);
+        assert_eq!(refs.last().unwrap().as_usize(), arr.len());
+
+        // NOTE: there are several ways this `Box` can be borrowed, so the compiler
+        // requires an explicit type on `S`, which is good.
+        let refs: Vec<Ref<i32>> = arr.add([Box::new(5i32)])?;
+        assert_eq!(&5, arr.get::<i32>(refs[0])?);
+        assert_eq!(refs.last().unwrap().as_usize(), arr.len());
+
         Ok(())
     }
 
@@ -529,7 +544,7 @@ mod test {
     #[test]
     fn copy_to_writer() -> Result<()> {
         let mut arr = FileArray::new_tempfile()?;
-        arr.add_one(&123u8)?;
+        arr.add_one(123u8)?;
 
         let mut buf = Vec::new();
         arr.copy_to(&mut buf)?;

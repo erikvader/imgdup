@@ -124,7 +124,7 @@ impl<S> BKTree<S> {
 
     fn new(mut db: FileArray) -> Result<Self> {
         if db.is_empty() {
-            let meta_ref = db.add_one::<Meta<S>>(&Meta::default())?;
+            let meta_ref = db.add_one(Meta::default())?;
             assert_eq!(
                 meta_ref,
                 FileArray::ref_to_first::<Meta<S>>(),
@@ -193,7 +193,7 @@ where
         &mut self,
         mut cur_node_ref: Ref<BKNode<S>>,
         hash: Hamming,
-        value: S,
+        value: S, // TODO: take a `B: Borrow<S>`? To allow taking stuff by reference and value
     ) -> Result<()> {
         assert!(cur_node_ref.is_not_null());
 
