@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::fs::File;
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::pin::Pin;
@@ -141,22 +142,21 @@ where
         let source_ident = S::identifier();
 
         if db.is_empty() {
-            let meta_ref = db.add_one(Meta::new(
+            init_meta(
+                &mut db,
                 source_ident
                     .expect("cannot create a new BKTree without a source identifier")
                     .to_string(),
-            ))?;
-            assert_eq!(
-                meta_ref,
-                FileArray::ref_to_first::<Meta>(),
-                "The header is not reachable with `ref_to_first`"
-            );
+            )?;
         }
 
+        let new_self = Self {
+            db,
+            _src: std::marker::PhantomData,
+        };
+
         if let Some(ident) = source_ident {
-            let meta_ref = FileArray::ref_to_first::<Meta>();
-            let meta = db.get::<Meta>(meta_ref)?;
-            let meta_ident = meta.source_ident.as_str();
+            let meta_ident = new_self.source_ident()?;
 
             if ident != meta_ident {
                 return Err(Error::SourceMismatch {
@@ -166,10 +166,20 @@ where
             }
         }
 
-        Ok(Self {
-            db,
-            _src: std::marker::PhantomData,
-        })
+        Ok(new_self)
+    }
+
+    fn empty_copy_of(&self, mut new_db: FileArray) -> Result<Self> {
+        assert!(new_db.is_empty());
+        let ident = self.source_ident()?.to_string();
+        init_meta(&mut new_db, ident)?;
+        Self::new(new_db)
+    }
+
+    fn source_ident(&self) -> Result<&str> {
+        let meta_ref = FileArray::ref_to_first::<Meta>();
+        let meta = self.db.get::<Meta>(meta_ref)?;
+        Ok(meta.source_ident.as_str())
     }
 
     fn root(&self) -> Result<Ref<BKNode>> {
@@ -188,6 +198,21 @@ where
     pub fn sync_to_disk(&self) -> Result<()> {
         Ok(self.db.sync_to_disk()?)
     }
+
+    // TODO: this shouldn't really need to be mut
+    pub fn copy_to(&mut self, file: File) -> Result<()> {
+        Ok(self.db.copy_to(file)?)
+    }
+}
+
+fn init_meta(db: &mut FileArray, source_ident: String) -> file_array::Result<()> {
+    let meta_ref = db.add_one(Meta::new(source_ident))?;
+    assert_eq!(
+        meta_ref,
+        FileArray::ref_to_first::<Meta>(),
+        "The header is not reachable with `ref_to_first`"
+    );
+    Ok(())
 }
 
 impl<S> BKTree<S>
@@ -213,32 +238,37 @@ where
         let mut items = items.into_iter();
 
         if let Some((hash, value)) = items.next() {
+            let value_box = DeferredBox::new(value)?;
             if root.is_null() {
-                let value_box = DeferredBox::new(value)?;
                 root = self.db.add_one(BKNode::new(hash, value_box))?;
                 self.set_root(root)?;
             } else {
-                self.add_internal(root, hash, value.borrow())?;
+                self.add_internal(root, hash, value_box)?;
             }
         }
 
         for (hash, value) in items {
-            self.add_internal(root, hash, value.borrow())?;
+            let value_box = DeferredBox::new(value)?;
+            self.add_internal(root, hash, value_box)?;
         }
         Ok(())
     }
+}
 
+impl<S> BKTree<S>
+where
+    S: PartialSource,
+{
     fn add_internal(
         &mut self,
         mut cur_node_ref: Ref<BKNode>,
         hash: Hamming,
-        value: &S,
+        value: DeferredBox,
     ) -> Result<()> {
         assert!(cur_node_ref.is_not_null());
 
         let new_node_ref = {
-            let value_box = DeferredBox::new::<_, S>(value)?;
-            let new_node = BKNode::new(hash, value_box);
+            let new_node = BKNode::new(hash, value);
             self.db.add_one(new_node)?
         };
 
@@ -303,7 +333,7 @@ where
 enum IterateCmd {
     Continue,
     WithinRange(RangeInclusive<Distance>),
-    #[allow(unused)] // TODO: hopefully something in the future will need this
+    #[allow(unused)] // TODO: rebuild will need this in the future with restartable walk
     Stop,
 }
 
@@ -349,8 +379,7 @@ macro_rules! impl_walk {
 
 impl<S> BKTree<S>
 where
-    S: Archive + PartialSource,
-    S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
+    S: PartialSource,
 {
     impl_walk!(
         walk_mut,
@@ -413,63 +442,57 @@ where
             Ok(IterateCmd::Continue)
         })
     }
+}
 
-    // TODO: implement after `AnyValue` is supported
-    // pub fn rebuild(&mut self) -> heap::Result<(usize, usize)> {
-    //     let mut dead = 0;
-    //     let mut alive = 0;
-    //     if self.root().is_null() {
-    //         return Ok((alive, dead));
-    //     }
+impl<S> BKTree<S>
+where
+    S: PartialSource,
+{
+    pub fn count_nodes(&self) -> Result<(usize, usize)> {
+        let mut alive = 0;
+        let mut dead = 0;
+        self.walk(|arch_node| {
+            if arch_node.removed {
+                dead += 1;
+            } else {
+                alive += 1;
+            }
+            Ok(IterateCmd::Continue)
+        })?;
 
-    //     // NOTE: make sure everything is on disk to make a reversal possible, in case
-    //     // anything fails
-    //     self.db.flush()?;
+        Ok((alive, dead))
+    }
 
-    //     let mut stack: Vec<Ref> = vec![self.root()];
-    //     self.set_root(Ref::null());
+    pub fn rebuild_to(&self, path: impl AsRef<Path>) -> Result<Self> {
+        let db = FileArray::new(path)?;
+        self.rebuild_to_internal(db)
+    }
 
-    //     while let Some(cur_ref) = stack.pop() {
-    //         let cur_node = self.db.deref_mut(cur_ref)?.expect("should exist");
-    //         stack.extend(cur_node.children.drain().map(|(_, child_ref)| child_ref));
+    fn rebuild_to_internal(&self, db: FileArray) -> Result<Self> {
+        let mut new_tree = self.empty_copy_of(db)?;
+        let mut new_root = Ref::null();
 
-    //         if cur_node.value.is_some() {
-    //             alive += 1;
-    //             let hash = cur_node.hash;
-    //             let root = self.root();
-    //             if root.is_null() {
-    //                 self.set_root(cur_ref);
-    //             } else {
-    //                 self.add_internal(root, hash, |_, _| Ok(cur_ref))?;
-    //             }
-    //         } else {
-    //             dead += 1;
-    //             self.db.remove(cur_ref)?;
-    //         }
-    //     }
+        self.walk(|arch_node| {
+            if !arch_node.removed {
+                let hash = arch_node.hash;
+                let value = arch_node.value.deserialize();
 
-    //     self.db.checkpoint()?;
+                // TODO: Make walk restartable by returning the stack after a stop. There
+                // could then be two walks, one that looks for the root and another that
+                // does add_internal on that root.
+                if new_root.is_null() {
+                    new_root = new_tree.db.add_one(BKNode::new(hash, value))?;
+                    new_tree.set_root(new_root)?;
+                } else {
+                    new_tree.add_internal(new_root, hash, value)?;
+                }
+            }
 
-    //     Ok((alive, dead))
-    // }
+            Ok(IterateCmd::Continue)
+        })?;
 
-    // TODO: implement after `AnyValue` support?
-    // pub fn count_nodes(&mut self) -> heap::Result<(usize, usize)> {
-    //     let mut alive = 0;
-    //     let mut dead = 0;
-    //     self.for_each_internal(
-    //         |_, node| {
-    //             if node.value.is_some() {
-    //                 alive += 1;
-    //             } else {
-    //                 dead += 1;
-    //             }
-    //             false
-    //         },
-    //         |_, _| (),
-    //     )?;
-    //     Ok((alive, dead))
-    // }
+        Ok(new_tree)
+    }
 }
 
 #[cfg(test)]
@@ -548,18 +571,20 @@ mod test {
             all
         );
 
-        // TODO: implement
-        // assert_eq!((2, 1), tree.count_nodes()?);
-        // tree.rebuild()?;
-        // assert_eq!((2, 0), tree.count_nodes()?);
+        assert_eq!((2, 1), tree.count_nodes()?);
+        let tree = {
+            let db_rebuilt = FileArray::new_tempfile()?;
+            tree.rebuild_to_internal(db_rebuilt)?
+        };
+        assert_eq!((2, 0), tree.count_nodes()?);
 
-        // assert_eq!(
-        //     vec![
-        //         (Hamming(0b100), "4".to_string()),
-        //         (Hamming(0b101), "5_2".to_string()),
-        //     ],
-        //     all
-        // );
+        assert_eq!(
+            vec![
+                (Hamming(0b100), "4".to_string()),
+                (Hamming(0b101), "5_2".to_string()),
+            ],
+            all
+        );
 
         Ok(())
     }

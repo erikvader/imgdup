@@ -10,7 +10,7 @@ use rkyv::{
     },
     validation::validators::DefaultValidator,
     vec::ArchivedVec,
-    AlignedVec, Archive, CheckBytes, Serialize,
+    AlignedVec, Archive, CheckBytes, Deserialize, Serialize,
 };
 
 pub type DeferredBoxSerializer = CompositeSerializer<
@@ -86,5 +86,12 @@ impl ArchivedDeferredBox {
 impl ArchivedDeferredBox {
     fn pin_mut_bytes(self: Pin<&mut Self>) -> Pin<&mut ArchivedVec<u8>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.bytes) }
+    }
+
+    // TODO: I couldn't figure out how to use the deserialize trait...
+    pub fn deserialize(&self) -> DeferredBox {
+        let mut bytes = AlignedVec::new();
+        bytes.extend_from_slice(self.bytes.as_slice());
+        DeferredBox { bytes }
     }
 }

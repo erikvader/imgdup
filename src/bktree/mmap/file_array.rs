@@ -216,6 +216,7 @@ impl FileArray {
         Ok(self.mmap.flush()?)
     }
 
+    // TODO: this shouldn't really need to be mut. Copy by reading from the mmap instead?
     pub fn copy_to<W>(&mut self, mut writer: W) -> Result<()>
     where
         W: Write,
