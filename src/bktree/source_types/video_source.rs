@@ -5,8 +5,6 @@ use std::{
 
 use crate::{frame_extractor::timestamp::Timestamp, utils::fsutils::is_simple_relative};
 
-// TODO: https://docs.rs/quote/1.0.33/quote/macro.quote.html
-// TODO: https://docs.rs/proc-macro2/1.0.66/proc_macro2/struct.TokenStream.html#impl-Display-for-TokenStream
 #[derive(serde::Serialize, serde::Deserialize, Clone, Hash, PartialEq, Eq)]
 pub struct VidSrc {
     frame_pos: Timestamp,

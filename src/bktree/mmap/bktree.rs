@@ -5,12 +5,12 @@ use std::pin::Pin;
 
 use super::deferred_box::{self, DeferredBox, DeferredBoxSerializer};
 use super::entry::*;
-use derivative::Derivative;
 use rkyv::validation::validators::DefaultValidator;
 use rkyv::vec::ArchivedVec;
 use rkyv::{Archive, CheckBytes, Serialize};
 
-use super::file_array::{self, FileArray, FileArraySerializer, Ref};
+use super::file_array::{self, FileArray, Ref};
+use crate::bktree::source_types::{PartialSource, Source};
 use crate::imghash::hamming::{Distance, Hamming};
 
 #[derive(thiserror::Error, Debug)]
@@ -19,17 +19,22 @@ pub enum Error {
     FileArray(#[from] file_array::Error),
     #[error("deferred box: {0}")]
     DeferredBox(#[from] deferred_box::Error),
+    #[error(
+        "source mismatch: trying to open as {opening_as}, but it is stored as {stored_as}"
+    )]
+    SourceMismatch {
+        opening_as: String,
+        stored_as: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Serialize, Archive, Derivative)]
+#[derive(Serialize, Archive)]
 #[archive(check_bytes)]
-#[derivative(Default(bound = ""))]
 struct Meta {
-    #[derivative(Default(value = "Ref::null()"))]
     root: Ref<BKNode>,
-    // TODO: save some identifier for S
+    source_ident: String,
     // TODO: somehow store the version of this struct itself? Need two layers of headers?
     // The first layer has the version and points to the other header (this one)? Or use
     // repr(C) and store the version as the first field?
@@ -38,6 +43,15 @@ struct Meta {
 impl ArchivedMeta {
     fn root(self: Pin<&mut Self>) -> Pin<&mut Ref<BKNode>> {
         unsafe { self.map_unchecked_mut(|m| &mut m.root) }
+    }
+}
+
+impl Meta {
+    fn new(source_ident: String) -> Self {
+        Self {
+            root: Ref::null(),
+            source_ident,
+        }
     }
 }
 
@@ -106,32 +120,51 @@ impl ArchivedBKNode {
     }
 }
 
-// TODO: always require PartialSource
-pub struct BKTree<S> {
+pub struct BKTree<S>
+where
+    S: PartialSource,
+{
     db: FileArray,
     _src: std::marker::PhantomData<S>,
 }
 
-impl<S> BKTree<S> {
-    // TODO: Somehow allow opening without caring what S is. Handy for rebuilding or
-    // collecting stats.
+impl<S> BKTree<S>
+where
+    S: PartialSource,
+{
     pub fn from_file(file: impl AsRef<Path>) -> Result<Self> {
         let db = FileArray::new(file)?;
         Self::new(db)
     }
 
     fn new(mut db: FileArray) -> Result<Self> {
+        let source_ident = S::identifier();
+
         if db.is_empty() {
-            // TODO: stop using default
-            let meta_ref = db.add_one(Meta::default())?;
+            let meta_ref = db.add_one(Meta::new(
+                source_ident
+                    .expect("cannot create a new BKTree without a source identifier")
+                    .to_string(),
+            ))?;
             assert_eq!(
                 meta_ref,
                 FileArray::ref_to_first::<Meta>(),
-                "The header is reachable with `ref_to_first`"
+                "The header is not reachable with `ref_to_first`"
             );
         }
 
-        // TODO: make sure the identifier of `S` is the same as the one in `Meta`
+        if let Some(ident) = source_ident {
+            let meta_ref = FileArray::ref_to_first::<Meta>();
+            let meta = db.get::<Meta>(meta_ref)?;
+            let meta_ident = meta.source_ident.as_str();
+
+            if ident != meta_ident {
+                return Err(Error::SourceMismatch {
+                    opening_as: ident.to_string(),
+                    stored_as: meta_ident.to_string(),
+                });
+            }
+        }
 
         Ok(Self {
             db,
@@ -159,7 +192,7 @@ impl<S> BKTree<S> {
 
 impl<S> BKTree<S>
 where
-    S: Serialize<DeferredBoxSerializer>,
+    S: Serialize<DeferredBoxSerializer> + Source,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
 {
     pub fn add<B>(&mut self, hash: Hamming, value: B) -> Result<()>
@@ -316,9 +349,8 @@ macro_rules! impl_walk {
 
 impl<S> BKTree<S>
 where
-    S: Archive,
+    S: Archive + PartialSource,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
-    // TODO: Source bound
 {
     impl_walk!(
         walk_mut,
@@ -328,7 +360,13 @@ where
         Pin::as_mut
     );
     impl_walk!(walk, &Self, &ArchivedBKNode, get, std::convert::identity);
+}
 
+impl<S> BKTree<S>
+where
+    S: Archive + Source,
+    S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
+{
     pub fn for_each<F>(&self, mut visit: F) -> Result<()>
     where
         F: FnMut(Hamming, &S::Archived),
@@ -440,15 +478,18 @@ mod test {
 
     use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
+    use crate::bktree::source_types::{
+        any_source::AnySource, string_source::StringSource,
+    };
+
     use super::*;
 
-    // TODO: skapa under source_types, men bara under cfg(test)
-    type Source = String;
-    fn value(path: impl Into<Source>) -> Source {
-        path.into()
+    type Source = StringSource;
+    fn value(path: impl Into<String>) -> Source {
+        StringSource(path.into())
     }
 
-    fn create_bktree_tempfile<S>() -> Result<BKTree<S>> {
+    fn create_bktree_tempfile<S: PartialSource>() -> Result<BKTree<S>> {
         let arr = FileArray::new_tempfile()?;
         BKTree::new(arr)
     }
@@ -576,6 +617,25 @@ mod test {
         key.sort();
         assert_eq!(key, closest);
 
+        Ok(())
+    }
+
+    #[test]
+    fn source_mismatch() -> Result<()> {
+        let tree: BKTree<Source> = create_bktree_tempfile()?;
+        let file_array = tree.db;
+        let tree_unit = BKTree::<()>::new(file_array);
+        assert!(matches!(tree_unit, Err(Error::SourceMismatch { .. })));
+
+        let tree: BKTree<Source> = create_bktree_tempfile()?;
+        let file_array = tree.db;
+        let tree = BKTree::<Source>::new(file_array);
+        assert!(tree.is_ok());
+
+        let tree: BKTree<Source> = create_bktree_tempfile()?;
+        let file_array = tree.db;
+        let tree = BKTree::<AnySource>::new(file_array);
+        assert!(tree.is_ok());
         Ok(())
     }
 }
