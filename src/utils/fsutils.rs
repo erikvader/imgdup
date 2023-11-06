@@ -3,6 +3,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use super::simple_path::SimpleRelative;
+
 /// Checks whether the path is simply a filename, i.e., a normal part of a path.
 pub fn is_basename(path: impl AsRef<Path>) -> bool {
     // TODO: handle trailing slashes
@@ -15,29 +17,6 @@ pub fn is_basename(path: impl AsRef<Path>) -> bool {
     components.next().is_none()
 }
 
-// TODO: create a type backed by a `String` that is rkyv::Archive, and that also must be
-// simple relative.
-/// Checks whether the given path is relative, is UTF-8 and only contains slashes and
-/// filenames
-pub fn is_simple_relative(path: impl AsRef<Path>) -> bool {
-    let path = path.as_ref();
-    if !path
-        .components()
-        .all(|comp| matches!(comp, Component::Normal(_)))
-    {
-        return false;
-    }
-
-    let Some(path) = path.as_os_str().to_str() else {
-        return false;
-    };
-
-    !path.contains("//")
-        && !path.contains("/./")
-        && !path.ends_with("/.")
-        && !path.ends_with("/")
-}
-
 /// Removes all .. at the beginning of the path
 pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
     path.as_ref()
@@ -46,41 +25,22 @@ pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
         .collect()
 }
 
-/// How many components long a simple relative path is
-fn simple_depth(path: impl AsRef<Path>) -> usize {
-    path.as_ref()
-        .components()
-        .filter(|comp| !matches!(comp, Component::CurDir))
-        .inspect(|comp| {
-            if !matches!(comp, Component::Normal(_)) {
-                panic!("the path must be simple")
-            }
-        })
-        .count()
-}
-
 /// Create a symlink with a relative path to `target` at `link_name`.
 /// Both arguments must be relative to the current working directory.
 /// `link_name` must be a full path to a file to be created, not a directory to create the
 /// file in.
 pub fn symlink_relative(
     target: impl AsRef<Path>,
-    link_name: impl AsRef<Path>,
+    link_name: SimpleRelative,
 ) -> io::Result<()> {
     let target = target.as_ref();
-    let link_name = link_name.as_ref();
     assert!(
         target.is_relative(),
         "must be relative: {}",
         target.display()
     );
-    assert!(
-        link_name.is_relative(),
-        "must be relative: {}",
-        link_name.display()
-    );
 
-    let depth = simple_depth(link_name);
+    let depth = link_name.depth();
     assert!(depth >= 1);
     let target: PathBuf = iter::repeat(Component::ParentDir)
         .take(depth - 1)
@@ -168,27 +128,5 @@ pub fn is_dir_empty(path: impl AsRef<Path>) -> io::Result<bool> {
         Ok(_) => Ok(false),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn simple_paths() {
-        assert!(is_simple_relative("a/b"));
-        assert!(is_simple_relative("a"));
-        assert!(is_simple_relative(".a"));
-        assert!(is_simple_relative("a/.b"));
-        assert!(is_simple_relative("a/b."));
-
-        assert!(!is_simple_relative("a//b"));
-        assert!(!is_simple_relative("/a/b"));
-        assert!(!is_simple_relative("./a/b"));
-        assert!(!is_simple_relative("a/b/"));
-        assert!(!is_simple_relative("a/b/."));
-        assert!(!is_simple_relative("a/./b"));
-        assert!(!is_simple_relative("a/../b"));
     }
 }
