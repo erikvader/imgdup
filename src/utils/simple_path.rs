@@ -18,11 +18,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Serialize, Archive, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 #[archive(check_bytes)]
 /// A path that: is relative, is UTF-8 and only contains slashes and filenames
-pub struct SimpleRelative {
+// TODO: create a borrowed variant?
+pub struct SimplePath {
     inner: String,
 }
 
-impl SimpleRelative {
+impl SimplePath {
     pub fn new(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         if !path
@@ -66,28 +67,35 @@ impl SimpleRelative {
     }
 }
 
-impl AsRef<Path> for SimpleRelative {
+impl AsRef<Path> for SimplePath {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
 }
 
-impl ArchivedSimpleRelative {
+impl TryFrom<PathBuf> for SimplePath {
+    type Error = Error;
+
+    fn try_from(value: PathBuf) -> std::result::Result<Self, Self::Error> {
+        SimplePath::new(value)
+    }
+}
+
+impl ArchivedSimplePath {
     pub fn as_path(&self) -> &Path {
         self.inner.as_str().as_ref()
     }
 }
 
-impl AsRef<Path> for ArchivedSimpleRelative {
+impl AsRef<Path> for ArchivedSimplePath {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
 }
 
-pub fn clap_simple_relative_parser(
-    s: &str,
-) -> std::result::Result<SimpleRelative, String> {
-    SimpleRelative::new(s).map_err(|_| {
+// TODO: is there a trait to impl to make this supported automatically with clap?
+pub fn clap_simple_relative_parser(s: &str) -> std::result::Result<SimplePath, String> {
+    SimplePath::new(s).map_err(|_| {
         format!(
             "path is not simple relative, i.e., is relative and only contains \
                      normal components"
@@ -100,7 +108,7 @@ mod test {
     use super::*;
 
     fn is_simple_relative(path: impl Into<PathBuf>) -> bool {
-        SimpleRelative::new(path).is_ok()
+        SimplePath::new(path).is_ok()
     }
 
     #[test]

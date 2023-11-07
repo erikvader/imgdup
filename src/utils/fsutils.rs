@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use super::simple_path::SimpleRelative;
+use super::simple_path::SimplePath;
 
 /// Checks whether the path is simply a filename, i.e., a normal part of a path.
 pub fn is_basename(path: impl AsRef<Path>) -> bool {
@@ -31,7 +31,7 @@ pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
 /// file in.
 pub fn symlink_relative(
     target: impl AsRef<Path>,
-    link_name: SimpleRelative,
+    link_name: &SimplePath, // TODO: accept a borrowed variant instead
 ) -> io::Result<()> {
     let target = target.as_ref();
     assert!(
@@ -91,7 +91,7 @@ pub fn clear_dir(dir: impl AsRef<Path>) -> io::Result<()> {
 
 /// Escape a filename Emacs style
 pub fn path_as_filename(p: impl AsRef<Path>) -> String {
-    p.as_ref().display().to_string().replace('/', "!")
+    p.as_ref().to_string_lossy().to_owned().replace('/', "!")
 }
 
 /// Collects all files in the given directories, does not walk them recursively.

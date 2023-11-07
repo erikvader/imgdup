@@ -1,20 +1,19 @@
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-};
+use std::{fmt, path::Path};
 
-use crate::{frame_extractor::timestamp::Timestamp, utils::fsutils::is_simple_relative};
+use rkyv::{Archive, Serialize};
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Hash, PartialEq, Eq)]
+use crate::{frame_extractor::timestamp::Timestamp, utils::simple_path::SimplePath};
+
+#[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq)]
+#[archive(check_bytes)]
 pub struct VidSrc {
     frame_pos: Timestamp,
-    path: PathBuf,
+    path: SimplePath,
     mirrored: Mirror,
 }
 
-#[derive(
-    serde::Serialize, serde::Deserialize, Copy, Clone, Hash, PartialEq, Eq, Debug,
-)]
+#[derive(Serialize, Archive, Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[archive(check_bytes)]
 pub enum Mirror {
     Normal,
     Mirrored,
@@ -42,8 +41,7 @@ impl fmt::Display for VidSrc {
 }
 
 impl VidSrc {
-    pub fn new(frame_pos: Timestamp, path: PathBuf, mirrored: Mirror) -> Self {
-        assert!(is_simple_relative(&path));
+    pub fn new(frame_pos: Timestamp, path: SimplePath, mirrored: Mirror) -> Self {
         Self {
             frame_pos,
             path,
@@ -52,7 +50,7 @@ impl VidSrc {
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.path.as_ref()
     }
 
     pub fn frame_pos(&self) -> &Timestamp {

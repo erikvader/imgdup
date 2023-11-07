@@ -1,10 +1,12 @@
 use std::{fmt, time::Duration};
 
 use ffmpeg::Rational;
+use rkyv::{Archive, Serialize};
 
 extern crate ffmpeg_next as ffmpeg;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Serialize, Archive, Clone, Debug, Hash, PartialEq, Eq)]
+#[archive(check_bytes)]
 pub struct Timestamp {
     pub(super) timebase_numerator: i32,
     pub(super) timebase_denominator: i32,
