@@ -2,13 +2,13 @@ use std::{fmt, path::Path};
 
 use rkyv::{Archive, Serialize};
 
-use crate::{frame_extractor::timestamp::Timestamp, utils::simple_path::SimplePath};
+use crate::{frame_extractor::timestamp::Timestamp, utils::simple_path::SimplePathBuf};
 
 #[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq)]
 #[archive(check_bytes)]
 pub struct VidSrc {
     frame_pos: Timestamp,
-    path: SimplePath,
+    path: SimplePathBuf,
     mirrored: Mirror,
 }
 
@@ -41,7 +41,7 @@ impl fmt::Display for VidSrc {
 }
 
 impl VidSrc {
-    pub fn new(frame_pos: Timestamp, path: SimplePath, mirrored: Mirror) -> Self {
+    pub fn new(frame_pos: Timestamp, path: SimplePathBuf, mirrored: Mirror) -> Self {
         Self {
             frame_pos,
             path,

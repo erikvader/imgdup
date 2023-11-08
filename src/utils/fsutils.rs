@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use super::simple_path::SimplePath;
+use super::simple_path::SimplePathBuf;
 
 /// Checks whether the path is simply a filename, i.e., a normal part of a path.
 pub fn is_basename(path: impl AsRef<Path>) -> bool {
@@ -31,7 +31,7 @@ pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
 /// file in.
 pub fn symlink_relative(
     target: impl AsRef<Path>,
-    link_name: &SimplePath, // TODO: accept a borrowed variant instead
+    link_name: &SimplePathBuf, // TODO: accept a borrowed variant instead
 ) -> io::Result<()> {
     let target = target.as_ref();
     assert!(

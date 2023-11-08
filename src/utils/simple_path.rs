@@ -19,11 +19,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[archive(check_bytes)]
 /// A path that: is relative, is UTF-8 and only contains slashes and filenames
 // TODO: create a borrowed variant?
-pub struct SimplePath {
+pub struct SimplePathBuf {
     inner: String,
 }
 
-impl SimplePath {
+impl SimplePathBuf {
     pub fn new(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         if !path
@@ -67,35 +67,37 @@ impl SimplePath {
     }
 }
 
-impl AsRef<Path> for SimplePath {
+impl AsRef<Path> for SimplePathBuf {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
 }
 
-impl TryFrom<PathBuf> for SimplePath {
+impl TryFrom<PathBuf> for SimplePathBuf {
     type Error = Error;
 
     fn try_from(value: PathBuf) -> std::result::Result<Self, Self::Error> {
-        SimplePath::new(value)
+        SimplePathBuf::new(value)
     }
 }
 
-impl ArchivedSimplePath {
+impl ArchivedSimplePathBuf {
     pub fn as_path(&self) -> &Path {
         self.inner.as_str().as_ref()
     }
 }
 
-impl AsRef<Path> for ArchivedSimplePath {
+impl AsRef<Path> for ArchivedSimplePathBuf {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
 }
 
 // TODO: is there a trait to impl to make this supported automatically with clap?
-pub fn clap_simple_relative_parser(s: &str) -> std::result::Result<SimplePath, String> {
-    SimplePath::new(s).map_err(|_| {
+pub fn clap_simple_relative_parser(
+    s: &str,
+) -> std::result::Result<SimplePathBuf, String> {
+    SimplePathBuf::new(s).map_err(|_| {
         format!(
             "path is not simple relative, i.e., is relative and only contains \
                      normal components"
@@ -108,7 +110,7 @@ mod test {
     use super::*;
 
     fn is_simple_relative(path: impl Into<PathBuf>) -> bool {
-        SimplePath::new(path).is_ok()
+        SimplePathBuf::new(path).is_ok()
     }
 
     #[test]
