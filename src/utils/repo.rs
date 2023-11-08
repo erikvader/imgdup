@@ -8,7 +8,7 @@ use std::{
 use color_eyre::eyre::{self, Context}; // TODO: use custom error type instead
 use image::{ImageBuffer, ImageOutputFormat};
 
-use crate::utils::simple_path::SimplePathBuf;
+use crate::utils::simple_path::{SimplePath, SimplePathBuf};
 
 use super::fsutils;
 
@@ -134,12 +134,9 @@ impl Entry {
         let link_name = link_name.as_ref();
         assert!(fsutils::is_basename(link_name));
         let link_name = self.next_path(link_name);
-        // TODO: A borrowed SimplePath would be nice here. `link_name` is copied as it
-        // works right now.
         let link_name =
-            SimplePathBuf::new(link_name).wrap_err("link name is not simple")?;
-        fsutils::symlink_relative(target, &link_name)
-            .wrap_err("failed to create link")?;
+            SimplePath::new(&link_name).wrap_err("link name is not simple")?;
+        fsutils::symlink_relative(target, link_name).wrap_err("failed to create link")?;
         Ok(())
     }
 
