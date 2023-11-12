@@ -35,6 +35,10 @@ impl SimiArgs {
         self
     }
 
+    pub fn threshold(&self) -> Distance {
+        self.similarity_threshold
+    }
+
     pub fn is_within(&self, dist: Distance) -> bool {
         dist <= self.similarity_threshold
     }

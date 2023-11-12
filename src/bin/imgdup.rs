@@ -1,9 +1,8 @@
 use std::{
-    cmp,
     collections::HashSet,
     ffi::OsString,
     num::NonZeroU32,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{mpsc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -13,7 +12,7 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use common::Payload;
 use image::RgbImage;
-use imgdup::imghash::preproc::PreprocError;
+use imgdup::utils::simple_path::SimplePath;
 use imgdup::{bin_common::ignored_hashes::read_ignored, imghash::preproc::PreprocArgs};
 use imgdup::{bin_common::ignored_hashes::Ignored, imghash::similarity::SimiArgs};
 use imgdup::{
@@ -23,20 +22,15 @@ use imgdup::{
         source_types::video_source::{Mirror, VidSrc},
     },
     frame_extractor::{frame_extractor::FrameExtractor, timestamp::Timestamp},
-    imghash::{
-        hamming::{Distance, Hamming},
-        imghash,
-        preproc::PreprocCli,
-        similarity::SimiCli,
-    },
+    imghash::{hamming::Hamming, preproc::PreprocCli, similarity::SimiCli},
     utils::repo::{LazyEntry, Repo},
-    utils::work_queue::WorkQueue,
     utils::{
         fsutils::{all_files, read_optional_file},
         simple_path::clap_simple_relative_parser,
     },
     utils::{imgutils, simple_path::SimplePathBuf},
 };
+use imgdup::{imghash::preproc::PreprocError, utils::fsutils};
 use rayon::prelude::*;
 
 #[derive(Parser, Debug)]
@@ -111,6 +105,11 @@ fn main() -> eyre::Result<()> {
     init_logger(cli.logfile.as_deref())?;
 
     // TODO: extract all these functions
+    log::info!("Backing up the database file");
+    fsutils::backup_file(&cli.database_file)
+        .wrap_err("failed to backup the database file")?;
+    log::info!("Backed it up, if it existed");
+
     let mut tree =
         BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
             format!(
@@ -120,31 +119,35 @@ fn main() -> eyre::Result<()> {
         })?;
 
     log::info!("Finding all files in: {:?}", cli.src_dirs);
-    let src_files: HashSet<PathBuf> = all_files(cli.src_dirs)?;
+    let src_files: Vec<PathBuf> = all_files(cli.src_dirs)?;
+    let src_files: Result<HashSet<SimplePathBuf>, _> = src_files
+        .into_iter()
+        .map(|path| SimplePathBuf::new(path))
+        .collect();
+    let src_files = src_files.wrap_err("some path from a src dir is not simple")?;
     log::info!("Found {} files", src_files.len());
 
     log::info!(
         "Finding all files in database at: {}",
         cli.database_file.display()
     );
-    let tree_files: HashSet<PathBuf> = {
+    let tree_files: HashSet<SimplePathBuf> = {
         let mut tree_files = HashSet::new();
         tree.for_each(|_, src| {
-            // TODO: https://doc.rust-lang.org/std/collections/struct.HashSet.html#method.get_or_insert_owned
             tree_files.insert(src.path().to_owned());
         })?;
         tree_files
     };
     log::info!("Found {} files", tree_files.len());
 
-    let new_files: Vec<_> = src_files
+    let new_files: Vec<&SimplePath> = src_files
         .difference(&tree_files)
         .take(cli.limit)
-        .map(|pb| pb.as_path())
+        .map(|pb| pb.as_simple_path())
         .collect();
-    let removed_files: HashSet<_> = tree_files
+    let removed_files: HashSet<&SimplePath> = tree_files
         .difference(&src_files)
-        .map(|pb| pb.as_path())
+        .map(|pb| pb.as_simple_path())
         .collect();
 
     log::info!("Removing {} removed files from the DB", removed_files.len());
@@ -165,7 +168,6 @@ fn main() -> eyre::Result<()> {
     log::info!("Ignoring {} images", ignored_hashes.len());
 
     log::info!("Processing {} new files", new_files.len());
-    // let work_queue = WorkQueue::new(new_files);
     let repo_dup = Repo::new(cli.dup_dir).wrap_err("failed to create the dup repo")?;
     let repo_grave = if let Some(grave) = cli.graveyard_dir {
         Some(Mutex::new(
@@ -194,7 +196,20 @@ fn main() -> eyre::Result<()> {
                     )
                 }),
             ),
-            ("Tmai", s.spawn(tree::main)),
+            (
+                "Tmai",
+                s.spawn(|| {
+                    tree::main(
+                        tree::Ctx {
+                            simi_args: &simi_args,
+                        },
+                        rx,
+                        tree,
+                        repo_dup,
+                        tree_threads,
+                    )
+                }),
+            ),
         ];
 
         for (name, handle) in handles {
@@ -206,48 +221,6 @@ fn main() -> eyre::Result<()> {
         }
     });
 
-    // thread::scope(|s| {
-    //     let handles = {
-    //         let mut handles = vec![];
-    //         let (tx, rx) = mpsc::sync_channel::<Payload>(16);
-
-    //         for i in 0..cmp::min(work_queue.len(), cli.video_threads.get() as usize) {
-    //             let tx = tx.clone();
-    //             let video_thread = thread::Builder::new()
-    //                 .name(format!("V{i:03}"))
-    //                 .spawn_scoped(s, || {
-    //                     video_worker(
-    //                         tx,
-    //                         &work_queue,
-    //                         &hash_conf,
-    //                         &ignored_hashes,
-    //                         repo_grave.as_ref(),
-    //                     )
-    //                 })
-    //                 .expect("failed to spawn thread");
-    //             handles.push((format!("video_{i}"), video_thread));
-    //         }
-
-    //         let tree_thread = thread::Builder::new()
-    //             .name(format!("Tree"))
-    //             .spawn_scoped(s, || {
-    //                 tree_worker(rx, tree, repo_dup, hash_conf.similarity_threshold)
-    //             })
-    //             .expect("failed to spawn thread");
-    //         handles.push(("tree".to_string(), tree_thread));
-
-    //         handles
-    //     };
-
-    //     for (name, handle) in handles {
-    //         match handle.join() {
-    //             Err(_) => log::error!("Thread '{name}' panicked"),
-    //             Ok(Err(e)) => log::error!("Thread '{name}' returned an error: {e:?}"),
-    //             Ok(Ok(())) => (),
-    //         }
-    //     }
-    // });
-
     Ok(())
 }
 
@@ -256,7 +229,7 @@ mod common {
 
     #[derive(Debug)]
     pub struct Payload<'env> {
-        pub video_path: &'env Path,
+        pub video_path: &'env SimplePath,
         pub hashes: Vec<(Timestamp, Hamming, Mirror)>,
     }
 }
@@ -269,7 +242,7 @@ mod video {
         pub preproc_args: &'env PreprocArgs,
         pub simi_args: &'env SimiArgs,
         pub ignored_hashes: &'env Ignored,
-        pub new_files: &'env [&'env Path],
+        pub new_files: &'env [&'env SimplePath],
         pub repo_grave: Option<&'env Mutex<Repo>>,
     }
 
@@ -278,6 +251,7 @@ mod video {
         tx: mpsc::SyncSender<Payload<'env>>,
         num_threads: usize,
     ) -> eyre::Result<()> {
+        assert!(num_threads >= 1);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .thread_name(|i| format!("V{i:03}"))
@@ -289,7 +263,8 @@ mod video {
     }
 
     fn pool_main<'env>(ctx: Ctx<'env>, tx: mpsc::SyncSender<Payload<'env>>) {
-        let failed: Vec<(&'env Path, eyre::Report)> = (0..ctx.new_files.len())
+        log::debug!("video worker working");
+        let failed: Vec<(&'env SimplePath, eyre::Report)> = (0..ctx.new_files.len())
             .into_par_iter()
             .map(|i| {
                 (
@@ -309,11 +284,7 @@ mod video {
                     Some(None)
                 }
                 Err(e) => {
-                    log::error!(
-                        "Failed to get the hashes from '{}': {:?}",
-                        vid_path.display(),
-                        e
-                    );
+                    log::error!("Failed to get the hashes from '{}': {:?}", vid_path, e);
                     Some(Some((vid_path, e)))
                 }
             })
@@ -325,20 +296,21 @@ mod video {
             log::error!("Summary of videos that errored:");
         }
         for (path, error) in failed {
-            log::error!("'{}': {:?}", path.display(), error);
+            log::error!("'{}': {:?}", path, error);
         }
+        log::debug!("video worker ended");
     }
 
     fn get_hashes<'env>(
         ctx: Ctx<'env>,
         i: usize,
     ) -> eyre::Result<Vec<(Timestamp, Hamming, Mirror)>> {
-        let video: &Path = ctx.new_files.get(i).expect("should be in range");
+        let video: &SimplePath = ctx.new_files.get(i).expect("should be in range");
         log::info!("Progress: {}/{} videos", i + 1, ctx.new_files.len());
-        log::info!("Retrieving hashes for: {}", video.display());
+        log::info!("Retrieving hashes for: {}", video);
 
-        let mut extractor =
-            FrameExtractor::new(video).wrap_err("Failed to create the extractor")?;
+        let mut extractor = FrameExtractor::new(video.as_path())
+            .wrap_err("Failed to create the extractor")?;
         let approx_len = extractor.approx_length();
 
         // TODO: move to some config struct and add to Ctx
@@ -393,7 +365,7 @@ mod video {
             extractor.seek_forward(step).wrap_err("Failed to seek")?;
         }
 
-        log::info!("Got {} hashes from: {}", hashes.len(), video.display());
+        log::info!("Got {} hashes from: {}", hashes.len(), video);
         Ok(hashes)
     }
 
@@ -469,29 +441,44 @@ mod video {
 }
 
 mod tree {
+
     use super::*;
 
-    pub fn main() -> eyre::Result<()> {
-        Ok(())
+    #[derive(Clone, Copy)]
+    pub struct Ctx<'env> {
+        pub simi_args: &'env SimiArgs,
+    }
+
+    pub fn main<'env>(
+        ctx: Ctx<'env>,
+        rx: mpsc::Receiver<Payload<'env>>,
+        tree: BKTree<VidSrc>,
+        repo: Repo,
+        num_threads: usize,
+    ) -> eyre::Result<()> {
+        assert!(num_threads >= 1);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .thread_name(|i| format!("T{i:03}"))
+            .build()
+            .wrap_err("failed to create thread pool")?;
+
+        pool.install(|| pool_main(ctx, rx, tree, repo))
     }
 
     // TODO: handle ctrl+c and properly close the db
-    fn tree_worker(
-        rx: mpsc::Receiver<Payload>,
+    fn pool_main<'env>(
+        ctx: Ctx<'env>,
+        rx: mpsc::Receiver<Payload<'env>>,
         mut tree: BKTree<VidSrc>,
         mut repo: Repo,
-        similarity_threshold: Distance,
     ) -> eyre::Result<()> {
         log::debug!("Tree worker working");
 
         while let Ok(Payload { video_path, hashes }) = rx.recv() {
-            log::info!("Finding dups of: {}", video_path.display());
-            let similar_videos = find_similar_videos(
-                hashes.iter().map(|(_, hash, _)| *hash),
-                &mut tree,
-                similarity_threshold,
-            )
-            .wrap_err("failed to find similar videos")?;
+            log::info!("Finding dups of: {}", video_path);
+            let similar_videos = find_similar_videos(ctx, &hashes, &mut tree)
+                .wrap_err("failed to find similar videos")?;
             log::info!("Found {} duplicate videos", similar_videos.len());
 
             if !similar_videos.is_empty() {
@@ -506,8 +493,9 @@ mod tree {
         }
 
         log::info!("Closing the tree");
-        // TODO:
-        // tree.close().wrap_err("failed to close the tree")?;
+        tree.sync_to_disk()
+            .wrap_err("failed to sync the tree to disk")?;
+        drop(tree);
         log::info!("Closed!");
 
         log::debug!("Tree worker not working");
@@ -517,21 +505,19 @@ mod tree {
     fn save_video(
         hashes: Vec<(Timestamp, Hamming, Mirror)>,
         tree: &mut BKTree<VidSrc>,
-        video_path: &Path,
+        video_path: &SimplePath,
     ) -> eyre::Result<()> {
-        // TODO:
-        // tree.add_all(hashes.into_iter().map(|(ts, hash, mirrored)| {
-        //     (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
-        // }))
-        // .wrap_err("failed to add to the tree")?;
-
+        tree.add_all(hashes.into_iter().map(|(ts, hash, mirrored)| {
+            (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
+        }))
+        .wrap_err("failed to add to the tree")?;
         Ok(())
     }
 
     fn link_dup(
         repo: &mut Repo,
-        video_path: &Path,
-        similar_videos: HashSet<PathBuf>,
+        video_path: &SimplePath,
+        similar_videos: HashSet<&SimplePath>,
     ) -> eyre::Result<()> {
         let mut entry = repo
             .new_entry()
@@ -550,19 +536,24 @@ mod tree {
         Ok(())
     }
 
-    fn find_similar_videos(
-        hashes: impl IntoIterator<Item = Hamming>,
-        tree: &mut BKTree<VidSrc>,
-        similarity_threshold: Distance,
-    ) -> eyre::Result<HashSet<PathBuf>> {
-        let mut similar_videos = HashSet::new();
-        for hash in hashes {
-            // TODO:
-            // tree.find_within(hash, similarity_threshold, |_, src| {
-            //     similar_videos.insert(src.path().to_owned());
-            // })
-            // .wrap_err("failed to find_within")?;
-        }
-        Ok(similar_videos)
+    fn find_similar_videos<'env>(
+        ctx: Ctx<'env>,
+        frames: &[(Timestamp, Hamming, Mirror)],
+        tree: &'env mut BKTree<VidSrc>,
+    ) -> eyre::Result<HashSet<&'env SimplePath>> {
+        let sims: eyre::Result<Vec<Vec<_>>> = frames
+            .par_iter()
+            .map(|(_, hash, _)| hash)
+            .map(|hash| -> eyre::Result<Vec<_>> {
+                let mut res = Vec::new();
+                tree.find_within(*hash, ctx.simi_args.threshold(), |_, src| {
+                    res.push(src.path());
+                })?;
+                Ok(res)
+            })
+            .collect();
+
+        let sims = sims.wrap_err("failed to find similar videos")?;
+        Ok(sims.into_iter().flatten().collect())
     }
 }

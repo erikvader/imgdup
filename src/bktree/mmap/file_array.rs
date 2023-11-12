@@ -217,6 +217,7 @@ impl FileArray {
     }
 
     // TODO: this shouldn't really need to be mut. Copy by reading from the mmap instead?
+    // TODO: remove this? Feels weird to have, why not just copy the file normally?
     pub fn copy_to<W>(&mut self, mut writer: W) -> Result<()>
     where
         W: Write,
@@ -231,7 +232,8 @@ impl FileArray {
                 Ok(())
             }();
 
-            file.seek(SeekFrom::Start(original_pos))?;
+            file.seek(SeekFrom::Start(original_pos))
+                .expect("failed to reset the cursor, is in an invalid state now");
             res
         })
     }
@@ -330,7 +332,8 @@ impl FileArray {
         let mut refs: Vec<Ref<S>> = Vec::new();
 
         for item in items.into_iter() {
-            // TODO: make sure sync_to_disk always is called if this fails?
+            // TODO: make sure to always call file.flush() even if this fails? To make
+            // sure nothing is in the buffer.
             self.seri.serialize_value(item.borrow())?;
             refs.push(Ref::new_usize(self.seri.pos()));
         }
@@ -359,7 +362,7 @@ impl FileArray {
             .map(|vec| vec.into_iter().next().expect("should have exactly one"))
     }
 
-    // TODO: have unsafe getters as an alternative?
+    // TODO: have unsafe getters that don't check the bytes as an alternative?
     pub fn get<'a, D>(&'a self, key: Ref<D>) -> Result<&'a D::Archived>
     where
         D: Archive,

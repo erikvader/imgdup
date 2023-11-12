@@ -121,6 +121,24 @@ pub fn read_optional_file(path: impl AsRef<Path>) -> io::Result<Option<String>> 
     }
 }
 
+/// Creates a backup with the extension ".backup", if the file exists. The path must refer
+/// to something that has a filename.
+pub fn backup_file(path: impl AsRef<Path>) -> io::Result<()> {
+    let path = path.as_ref();
+    let mut new_file_name = path
+        .file_name()
+        .ok_or(io::ErrorKind::InvalidInput)?
+        .to_owned();
+    new_file_name.push(".backup");
+    let copy_to = path.with_file_name(new_file_name);
+
+    match fs::copy(path, copy_to) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+        Ok(_) => Ok(()),
+    }
+}
+
 /// Return true if the path is a directory that is empty
 pub fn is_dir_empty(path: impl AsRef<Path>) -> io::Result<bool> {
     let path = path.as_ref();

@@ -3,6 +3,7 @@ use std::{fmt, path::Path};
 use rkyv::{Archive, Serialize};
 
 use crate::frame_extractor::timestamp::ArchivedTimestamp;
+use crate::utils::simple_path::SimplePath;
 use crate::{frame_extractor::timestamp::Timestamp, utils::simple_path::SimplePathBuf};
 
 #[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq)]
@@ -50,8 +51,8 @@ impl VidSrc {
         }
     }
 
-    pub fn path(&self) -> &Path {
-        self.path.as_ref()
+    pub fn path(&self) -> &SimplePath {
+        &self.path
     }
 
     pub fn frame_pos(&self) -> &Timestamp {
@@ -64,7 +65,7 @@ impl VidSrc {
 }
 
 impl ArchivedVidSrc {
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> &SimplePath {
         self.path.as_ref()
     }
 

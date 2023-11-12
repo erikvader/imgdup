@@ -1,5 +1,6 @@
 use std::{
     borrow::Borrow,
+    fmt,
     ops::Deref,
     path::{Component, Path, PathBuf},
 };
@@ -78,6 +79,12 @@ impl TryFrom<PathBuf> for SimplePathBuf {
 impl From<SimplePathBuf> for PathBuf {
     fn from(value: SimplePathBuf) -> Self {
         value.inner.into()
+    }
+}
+
+impl fmt::Display for SimplePathBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_simple_path().fmt(f)
     }
 }
 
@@ -160,6 +167,22 @@ impl<'a> TryFrom<&'a Path> for &'a SimplePath {
 
     fn try_from(value: &'a Path) -> std::result::Result<Self, Self::Error> {
         SimplePath::new(value)
+    }
+}
+
+impl ToOwned for SimplePath {
+    type Owned = SimplePathBuf;
+
+    fn to_owned(&self) -> Self::Owned {
+        Self::Owned {
+            inner: self.inner.to_owned(),
+        }
+    }
+}
+
+impl fmt::Display for SimplePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.inner)
     }
 }
 
