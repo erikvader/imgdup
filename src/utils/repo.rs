@@ -8,7 +8,7 @@ use std::{
 use color_eyre::eyre::{self, Context}; // TODO: use custom error type instead
 use image::{ImageBuffer, ImageOutputFormat};
 
-use crate::utils::simple_path::{SimplePath, SimplePathBuf};
+use crate::utils::simple_path::SimplePath;
 
 use super::fsutils;
 
@@ -180,9 +180,11 @@ impl LazyEntry {
         Self { inner: None }
     }
 
-    pub fn get_or_init<F>(&mut self, init: F) -> eyre::Result<&mut Entry>
+    // NOTE: fallible version on `OnceCell` is not stable yet, so use a custom
+    // implementation https://github.com/rust-lang/rust/issues/109737
+    pub fn get_or_try_init<F, E>(&mut self, init: F) -> std::result::Result<&mut Entry, E>
     where
-        F: FnOnce() -> eyre::Result<Entry>,
+        F: FnOnce() -> std::result::Result<Entry, E>,
     {
         if self.inner.is_none() {
             self.inner = Some(init()?);
@@ -190,8 +192,8 @@ impl LazyEntry {
         Ok(self.inner.as_mut().unwrap())
     }
 
-    pub fn get_or_init2(&mut self, repo: &mut Repo) -> eyre::Result<&mut Entry> {
-        self.get_or_init(|| repo.new_entry())
+    pub fn get_or_init(&mut self, repo: &mut Repo) -> eyre::Result<&mut Entry> {
+        self.get_or_try_init(|| repo.new_entry())
     }
 }
 

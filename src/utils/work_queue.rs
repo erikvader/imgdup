@@ -1,3 +1,5 @@
+// TODO: remove this module?
+
 use std::sync::atomic::AtomicUsize;
 
 pub struct WorkQueue<T> {

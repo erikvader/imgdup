@@ -23,12 +23,12 @@ pub struct RemoveBordersCli {
 }
 
 #[derive(Copy, Clone)]
-pub struct RemoveBordersConf {
-    pub maskify_threshold: u8,
-    pub maximum_whites: f64,
+pub struct RemoveBordersArgs {
+    maskify_threshold: u8,
+    maximum_whites: f64,
 }
 
-impl Default for RemoveBordersConf {
+impl Default for RemoveBordersArgs {
     fn default() -> Self {
         Self {
             maskify_threshold: DEFAULT_MASKIFY_THRESHOLD,
@@ -37,7 +37,7 @@ impl Default for RemoveBordersConf {
     }
 }
 
-impl RemoveBordersConf {
+impl RemoveBordersArgs {
     pub fn maskify_threshold(mut self, threshold: u8) -> Self {
         self.maskify_threshold = threshold;
         self
@@ -47,11 +47,17 @@ impl RemoveBordersConf {
         self.maximum_whites = max;
         self
     }
+
+    pub fn remove_borders<'a>(&self, img: &'a RgbImage) -> SubImage<&'a RgbImage> {
+        let mask = maskify(img, self.maskify_threshold);
+        let bbox = watermark_getbbox(&mask, self.maximum_whites);
+        crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
+    }
 }
 
 impl RemoveBordersCli {
-    pub fn as_conf(&self) -> RemoveBordersConf {
-        RemoveBordersConf::default()
+    pub fn as_args(&self) -> RemoveBordersArgs {
+        RemoveBordersArgs::default()
             .maskify_threshold(self.maskify_threshold)
             .maximum_whites(self.maximum_whites)
     }
@@ -106,15 +112,6 @@ pub fn construct_gray(raw: &[&[u8]]) -> GrayImage {
     GrayImage::from_fn(width, height, |x, y| {
         image::Luma([raw[y as usize][x as usize]])
     })
-}
-
-pub fn remove_borders<'a>(
-    img: &'a RgbImage,
-    config: &RemoveBordersConf,
-) -> SubImage<&'a RgbImage> {
-    let mask = maskify(img, config.maskify_threshold);
-    let bbox = watermark_getbbox(&mask, config.maximum_whites);
-    crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
 }
 
 pub fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
@@ -208,7 +205,7 @@ mod test {
             bbox
         );
 
-        let cropped = remove_borders(&black, &RemoveBordersConf::default());
+        let cropped = RemoveBordersArgs::default().remove_borders(&black);
         assert!(is_img_empty(&*cropped));
         assert!(is_subimg_empty(&cropped));
     }

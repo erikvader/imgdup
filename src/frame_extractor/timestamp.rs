@@ -75,6 +75,18 @@ impl fmt::Display for Timestamp {
     }
 }
 
+impl ArchivedTimestamp {
+    // TODO: figure out of rkyv deserialize works and use that instead
+    pub fn deserialize(&self) -> Timestamp {
+        Timestamp {
+            timebase_numerator: self.timebase_numerator,
+            timebase_denominator: self.timebase_denominator,
+            timestamp: self.timestamp,
+            first_timestamp: self.first_timestamp,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

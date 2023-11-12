@@ -2,6 +2,7 @@ use std::{fmt, path::Path};
 
 use rkyv::{Archive, Serialize};
 
+use crate::frame_extractor::timestamp::ArchivedTimestamp;
 use crate::{frame_extractor::timestamp::Timestamp, utils::simple_path::SimplePathBuf};
 
 #[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq)]
@@ -61,3 +62,28 @@ impl VidSrc {
         self.mirrored
     }
 }
+
+impl ArchivedVidSrc {
+    pub fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+
+    pub fn frame_pos(&self) -> &ArchivedTimestamp {
+        &self.frame_pos
+    }
+
+    pub fn mirrored(&self) -> Mirror {
+        match self.mirrored {
+            ArchivedMirror::Normal => Mirror::Normal,
+            ArchivedMirror::Mirrored => Mirror::Mirrored,
+        }
+    }
+}
+
+impl super::private::Seal for VidSrc {}
+impl super::PartialSource for VidSrc {
+    fn identifier() -> Option<&'static str> {
+        Some("video:1")
+    }
+}
+impl super::Source for VidSrc {}

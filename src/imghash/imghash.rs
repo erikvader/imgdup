@@ -4,6 +4,8 @@ use image::{GenericImageView, Pixel, SubImage};
 
 use super::hamming::Hamming;
 
+// TODO: is this even worth it? Isn't the hasher just full of config and no expensive
+// actions?
 static HASHER: OnceLock<Hasher> = OnceLock::new();
 
 pub struct Hasher {

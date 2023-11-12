@@ -1,2 +1,2 @@
-pub mod hash_images;
+pub mod ignored_hashes;
 pub mod init;

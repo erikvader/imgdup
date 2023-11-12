@@ -75,6 +75,12 @@ impl TryFrom<PathBuf> for SimplePathBuf {
     }
 }
 
+impl From<SimplePathBuf> for PathBuf {
+    fn from(value: SimplePathBuf) -> Self {
+        value.inner.into()
+    }
+}
+
 impl ArchivedSimplePathBuf {
     pub fn as_path(&self) -> &Path {
         self.inner.as_str().as_ref()

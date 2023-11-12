@@ -339,7 +339,7 @@ enum IterateCmd {
 
 macro_rules! impl_walk {
     ($fun_name:ident, $self_type:ty, $visit_arg:ty, $db_get:ident, $visit_prep:expr) => {
-        fn $fun_name<F>(self: $self_type, mut visit: F) -> Result<()>
+        fn $fun_name<'a, F>(self: $self_type, mut visit: F) -> Result<()>
         where
             F: FnMut($visit_arg) -> Result<IterateCmd>,
         {
@@ -383,12 +383,18 @@ where
 {
     impl_walk!(
         walk_mut,
-        &mut Self,
+        &'a mut Self,
         Pin<&mut ArchivedBKNode>,
         get_mut,
         Pin::as_mut
     );
-    impl_walk!(walk, &Self, &ArchivedBKNode, get, std::convert::identity);
+    impl_walk!(
+        walk,
+        &'a Self,
+        &'a ArchivedBKNode,
+        get,
+        std::convert::identity
+    );
 }
 
 impl<S> BKTree<S>
@@ -396,9 +402,9 @@ where
     S: Archive + Source,
     S::Archived: for<'b> CheckBytes<DefaultValidator<'b>>,
 {
-    pub fn for_each<F>(&self, mut visit: F) -> Result<()>
+    pub fn for_each<'a, F>(&'a self, mut visit: F) -> Result<()>
     where
-        F: FnMut(Hamming, &S::Archived),
+        F: FnMut(Hamming, &'a S::Archived),
     {
         self.walk(|arch_node| {
             if !arch_node.removed {
@@ -409,14 +415,14 @@ where
         })
     }
 
-    pub fn find_within<F>(
-        &self,
+    pub fn find_within<'a, F>(
+        &'a self,
         hash: Hamming,
         within: Distance,
         mut visit: F,
     ) -> Result<()>
     where
-        F: FnMut(Hamming, &S::Archived),
+        F: FnMut(Hamming, &'a S::Archived),
     {
         self.walk(|arch_node| {
             let dist = arch_node.hash.distance_to(hash);

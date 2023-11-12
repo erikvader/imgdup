@@ -21,7 +21,7 @@ use image::RgbImage;
 
 use super::timestamp::Timestamp;
 
-// TODO: a dedicated error type should probably be used here?
+// TODO: a dedicated error type should probably be preferred here?
 pub type Result<T> = eyre::Result<T>;
 
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
@@ -46,6 +46,7 @@ pub struct FrameExtractor<'a> {
     orientation: Orientation,
 
     // the file name
+    // TODO: why not just save a `&'a Path`? Or a `T: AsRef<Path>`? This `Cow` feels weird
     path: Cow<'a, Path>,
 }
 

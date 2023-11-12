@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Errors and logs
 thiserror = "1"
 color-eyre = {version = "0.6", default-features = false}
 log = "0.4"
@@ -12,6 +13,9 @@ simplelog = "0.12"
 # For plotting perf.rs and stuff (and generating imgdup debug info?)
 # TODO: reduce features
 plotters = "0.3"
+
+# For multiprocessing
+rayon = "1.8"
 
 # For the heap on the file system
 rusqlite = {version = "0.29", features = ["blob"]}
