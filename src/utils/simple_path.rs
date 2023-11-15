@@ -1,6 +1,6 @@
 use std::{
     borrow::Borrow,
-    fmt,
+    fmt, iter,
     ops::Deref,
     path::{Component, Path, PathBuf},
 };
@@ -44,7 +44,18 @@ impl SimplePathBuf {
     }
 
     pub fn as_simple_path(&self) -> &SimplePath {
-        SimplePath::new_str(self.inner.as_str())
+        SimplePath::new_str_unchecked(self.inner.as_str())
+    }
+
+    /// Undo the result of `SimplePath::resolve_file_to` and `SimplePath::resolve_dir_to`
+    /// to get back the original `target` argument.
+    pub fn unresolve(resolved_path: impl AsRef<Path>) -> Result<Self> {
+        let restored_path: PathBuf = resolved_path
+            .as_ref()
+            .components()
+            .skip_while(|comp| matches!(comp, Component::ParentDir))
+            .collect();
+        Self::new(restored_path)
     }
 }
 
@@ -94,7 +105,7 @@ impl ArchivedSimplePathBuf {
     }
 
     pub fn as_simple_path(&self) -> &SimplePath {
-        SimplePath::new_str(self.inner.as_str())
+        SimplePath::new_str_unchecked(self.inner.as_str())
     }
 }
 
@@ -119,14 +130,17 @@ pub struct SimplePath {
 impl SimplePath {
     pub fn new(path: &Path) -> Result<&Self> {
         let path = path.as_os_str().to_str().ok_or(Error::NotUTF8)?;
+        Self::new_str(path)
+    }
+
+    pub fn new_str(path: &str) -> Result<&Self> {
         if !is_simple(&path) {
             return Err(Error::NotSimple);
         }
-
-        Ok(Self::new_str(path))
+        Ok(Self::new_str_unchecked(path))
     }
 
-    fn new_str(s: &str) -> &Self {
+    fn new_str_unchecked(s: &str) -> &Self {
         // SAFETY: ok because the struct is repr(transparent) around an str. This is how
         // Path does it.
         unsafe { &*(s as *const str as *const Self) }
@@ -139,14 +153,41 @@ impl SimplePath {
     /// How many components long a simple relative path is
     pub fn depth(&self) -> usize {
         let path: &Path = self.inner.as_ref();
-        path.components()
-            .filter(|comp| !matches!(comp, Component::CurDir))
-            .inspect(|comp| {
-                if !matches!(comp, Component::Normal(_)) {
-                    panic!("the path must be simple")
-                }
-            })
-            .count()
+        path.components().count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Return a path that when followed from the directory the file at `self` is in, will
+    /// get to `target`. Both `self` and `target` should be relative to the same point.
+    /// Self must refer to a file, i.e., it can't be the empty path, `None` is returned in
+    /// that case.
+    pub fn resolve_file_to(&self, target: impl AsRef<SimplePath>) -> Option<PathBuf> {
+        if self.is_empty() {
+            return None;
+        }
+
+        let res = self.resolve_dir_to(target);
+        let mut components = res.components();
+        assert_eq!(
+            Some(Component::ParentDir),
+            components.next(),
+            "was expecting to pop a '..'"
+        );
+        Some(components.collect())
+    }
+
+    /// Return a path that when followed from the directory at `self`, will get to
+    /// `target`. Both `self` and `target` should be relative to the same point.
+    pub fn resolve_dir_to(&self, target: impl AsRef<SimplePath>) -> PathBuf {
+        let target = target.as_ref().as_path();
+        let depth = self.depth();
+        iter::repeat(Component::ParentDir)
+            .take(depth)
+            .chain(target.components())
+            .collect()
     }
 }
 
@@ -186,6 +227,30 @@ impl fmt::Display for SimplePath {
     }
 }
 
+impl PartialEq<SimplePathBuf> for &SimplePath {
+    fn eq(&self, other: &SimplePathBuf) -> bool {
+        *self == other.as_simple_path()
+    }
+}
+
+impl PartialEq<SimplePathBuf> for SimplePath {
+    fn eq(&self, other: &SimplePathBuf) -> bool {
+        &self == other
+    }
+}
+
+impl PartialEq<SimplePath> for SimplePathBuf {
+    fn eq(&self, other: &SimplePath) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<&SimplePath> for SimplePathBuf {
+    fn eq(&self, other: &&SimplePath) -> bool {
+        other == self
+    }
+}
+
 // TODO: is there a trait to impl to make this supported automatically with clap?
 pub fn clap_simple_relative_parser(
     s: &str,
@@ -212,24 +277,90 @@ fn is_simple(s: &str) -> bool {
 mod test {
     use super::*;
 
-    fn is_simple_relative(path: impl AsRef<Path>) -> bool {
+    fn is_simple(path: impl AsRef<Path>) -> bool {
         SimplePath::new(path.as_ref()).is_ok()
+    }
+
+    fn simple(path: &str) -> &SimplePath {
+        SimplePath::new_str(path).unwrap()
+    }
+
+    fn resolve_file_to(sself: &str, target: &str) -> Option<PathBuf> {
+        simple(sself).resolve_file_to(simple(target))
+    }
+
+    fn resolve_dir_to(sself: &str, target: &str) -> PathBuf {
+        simple(sself).resolve_dir_to(simple(target))
     }
 
     #[test]
     fn simple_paths() {
-        assert!(is_simple_relative("a/b"));
-        assert!(is_simple_relative("a"));
-        assert!(is_simple_relative(".a"));
-        assert!(is_simple_relative("a/.b"));
-        assert!(is_simple_relative("a/b."));
+        assert!(is_simple(""));
+        assert!(is_simple(" "));
+        assert!(is_simple("a/b"));
+        assert!(is_simple("a"));
+        assert!(is_simple(".a"));
+        assert!(is_simple("a/.b"));
+        assert!(is_simple("a/b."));
 
-        assert!(!is_simple_relative("a//b"));
-        assert!(!is_simple_relative("/a/b"));
-        assert!(!is_simple_relative("./a/b"));
-        assert!(!is_simple_relative("a/b/"));
-        assert!(!is_simple_relative("a/b/."));
-        assert!(!is_simple_relative("a/./b"));
-        assert!(!is_simple_relative("a/../b"));
+        assert!(!is_simple("."));
+        assert!(!is_simple("a//b"));
+        assert!(!is_simple("/a/b"));
+        assert!(!is_simple("./a/b"));
+        assert!(!is_simple("a/b/"));
+        assert!(!is_simple("a/b/."));
+        assert!(!is_simple("a/./b"));
+        assert!(!is_simple("a/../b"));
+    }
+
+    #[test]
+    fn depths() {
+        assert_eq!(0, simple("").depth());
+        assert_eq!(1, simple(" ").depth());
+        assert_eq!(2, simple(" / ").depth());
+        assert_eq!(2, simple("a/b").depth());
+        assert_eq!(1, simple("a").depth());
+    }
+
+    #[test]
+    fn resolve() {
+        assert_eq!(
+            Some("../hej".into()),
+            resolve_file_to("mapp1/fil.txt", "hej")
+        );
+        assert_eq!(Path::new("../hej"), resolve_dir_to("mapp1", "hej"));
+
+        assert_eq!(None, resolve_file_to("", "hej"));
+        assert_eq!(Some("".into()), resolve_file_to("fil.txt", ""));
+        assert_eq!(Path::new(".."), resolve_dir_to("mapp", ""));
+
+        assert_eq!(
+            Some("../../hej".into()),
+            resolve_file_to("mapp1/mapp2/fil.txt", "hej")
+        );
+    }
+
+    #[test]
+    fn unresolve() {
+        assert_eq!(
+            simple("fil.txt"),
+            SimplePathBuf::unresolve("../fil.txt").unwrap()
+        );
+        assert_eq!(
+            simple("fil.txt"),
+            SimplePathBuf::unresolve("fil.txt").unwrap()
+        );
+        assert_eq!(simple(""), SimplePathBuf::unresolve("").unwrap());
+    }
+
+    #[test]
+    fn equality() {
+        let buf = SimplePathBuf::new("hej").unwrap();
+        let pat = SimplePath::new_str("hej").unwrap();
+
+        assert_eq!(pat, buf);
+        assert_eq!(*pat, buf);
+        assert_eq!(buf, pat);
+        assert_eq!(buf, *pat);
     }
 }

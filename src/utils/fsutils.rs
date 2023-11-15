@@ -1,5 +1,5 @@
 use std::{
-    fs, io, iter,
+    fs, io,
     path::{Component, Path, PathBuf},
 };
 
@@ -17,37 +17,23 @@ pub fn is_basename(path: impl AsRef<Path>) -> bool {
     components.next().is_none()
 }
 
-/// Removes all .. at the beginning of the path
-pub fn remove_dot_dot(path: impl AsRef<Path>) -> PathBuf {
-    path.as_ref()
-        .components()
-        .skip_while(|comp| matches!(comp, Component::ParentDir))
-        .collect()
-}
-
 /// Create a symlink with a relative path to `target` at `link_name`.
 /// Both arguments must be relative to the current working directory.
-/// `link_name` must be a full path to a file to be created, not a directory to create the
-/// file in.
+/// `link_name` must be a path to a file to be created, not a directory to create the file
+/// in.
 pub fn symlink_relative(
-    target: impl AsRef<Path>,
+    target: impl AsRef<SimplePath>,
     link_name: impl AsRef<SimplePath>,
 ) -> io::Result<()> {
     let target = target.as_ref();
-    assert!(
-        target.is_relative(),
-        "must be relative: {}",
-        target.display()
-    );
-
     let link_name = link_name.as_ref();
-    let depth = link_name.depth();
-    assert!(depth >= 1);
-    let target: PathBuf = iter::repeat(Component::ParentDir)
-        .take(depth - 1)
-        .chain(target.components())
-        .collect();
 
+    let target = link_name.resolve_file_to(target).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the link name does not refer to a file",
+        )
+    })?;
     std::os::unix::fs::symlink(target, link_name)
 }
 
@@ -78,6 +64,8 @@ pub fn clear_dir(dir: impl AsRef<Path>) -> io::Result<()> {
     let dir = dir.as_ref();
     match fs::symlink_metadata(dir) {
         Ok(meta) if meta.is_dir() => {
+            // TODO: permissions and owner are not preserved when doing it like this. List
+            // all entries and remove them one by one instead.
             fs::remove_dir_all(dir)?;
             fs::create_dir(dir)
         }

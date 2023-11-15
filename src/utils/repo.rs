@@ -128,14 +128,16 @@ impl Entry {
     /// `target` is relative CWD
     pub fn create_link_relative(
         &mut self,
+        // TODO: create a `BasenamePath` or something that is a path that must only be a
+        // basename, i.e., `fsutils::is_basename`
         link_name: impl AsRef<Path>,
-        target: impl AsRef<Path>,
+        target: impl AsRef<SimplePath>,
     ) -> eyre::Result<()> {
         let link_name = link_name.as_ref();
         assert!(fsutils::is_basename(link_name));
         let link_name = self.next_path(link_name);
         let link_name =
-            SimplePath::new(&link_name).wrap_err("link name is not simple")?;
+            SimplePath::new(&link_name).wrap_err("the new link name is not simple")?;
         fsutils::symlink_relative(target, link_name).wrap_err("failed to create link")?;
         Ok(())
     }

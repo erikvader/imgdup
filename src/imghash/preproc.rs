@@ -51,6 +51,7 @@ impl PreprocArgs {
         self
     }
 
+    /// Preprocesses the image and hash it
     pub fn hash_img(&self, img: &RgbImage) -> Result<Hamming, PreprocError> {
         let no_borders = self.border_args.remove_borders(img);
 
@@ -59,5 +60,11 @@ impl PreprocArgs {
         }
 
         Ok(imghash::hash_sub(&no_borders))
+    }
+
+    /// Preprocess the image
+    // NOTE: this returns a new image to allow for preprocessing other than cropping
+    pub fn preprocess(&self, img: &RgbImage) -> RgbImage {
+        self.border_args.remove_borders(img).to_image()
     }
 }
