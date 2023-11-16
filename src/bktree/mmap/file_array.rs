@@ -216,28 +216,6 @@ impl FileArray {
         Ok(self.mmap.flush()?)
     }
 
-    // TODO: this shouldn't really need to be mut. Copy by reading from the mmap instead?
-    // TODO: remove this? Feels weird to have, why not just copy the file normally?
-    pub fn copy_to<W>(&mut self, mut writer: W) -> Result<()>
-    where
-        W: Write,
-    {
-        self.with_file(|file| -> Result<()> {
-            let original_pos = file.seek(SeekFrom::Current(0))?;
-
-            let res = || -> Result<()> {
-                file.seek(SeekFrom::Start(0))?;
-                let mut buf = BufReader::new(file.get_mut());
-                std::io::copy(&mut buf, &mut writer)?;
-                Ok(())
-            }();
-
-            file.seek(SeekFrom::Start(original_pos))
-                .expect("failed to reset the cursor, is in an invalid state now");
-            res
-        })
-    }
-
     pub fn len(&self) -> usize {
         Self::len_raw(&self.mmap)
     }
@@ -547,21 +525,5 @@ mod test {
         assert_eq!(Ref::new_u64(9), FileArray::ref_to_first::<u8>());
         assert_eq!(Ref::new_u64(24), FileArray::ref_to_first::<u128>());
         assert_eq!(Ref::new_u64(32), FileArray::ref_to_first::<MyStuff>());
-    }
-
-    #[test]
-    fn copy_to_writer() -> Result<()> {
-        let mut arr = FileArray::new_tempfile()?;
-        arr.add_one(123u8)?;
-
-        let mut buf = Vec::new();
-        arr.copy_to(&mut buf)?;
-
-        assert!(buf.len() >= HEADER_SIZE + std::mem::size_of::<u8>());
-
-        let pos = FileArray::ref_to_first::<u8>().as_usize();
-        assert_eq!(123u8, buf[pos - 1]);
-
-        Ok(())
     }
 }

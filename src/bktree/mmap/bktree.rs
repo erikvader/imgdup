@@ -198,11 +198,6 @@ where
     pub fn sync_to_disk(&self) -> Result<()> {
         Ok(self.db.sync_to_disk()?)
     }
-
-    // TODO: this shouldn't really need to be mut
-    pub fn copy_to(&mut self, file: File) -> Result<()> {
-        Ok(self.db.copy_to(file)?)
-    }
 }
 
 fn init_meta(db: &mut FileArray, source_ident: String) -> file_array::Result<()> {
