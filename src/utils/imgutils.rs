@@ -49,9 +49,13 @@ impl RemoveBordersArgs {
     }
 
     pub fn remove_borders<'a>(&self, img: &'a RgbImage) -> SubImage<&'a RgbImage> {
-        let mask = maskify(img, self.maskify_threshold);
+        let mask = self.maskify(img);
         let bbox = watermark_getbbox(&mask, self.maximum_whites);
         crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
+    }
+
+    pub fn maskify(&self, img: &RgbImage) -> GrayImage {
+        maskify(img, self.maskify_threshold)
     }
 }
 
@@ -114,7 +118,7 @@ pub fn construct_gray(raw: &[&[u8]]) -> GrayImage {
     })
 }
 
-pub fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
+fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
     let mut mask = grayscale(img);
     mask.pixels_mut().for_each(|p| {
         p.apply(|bright| (bright <= threshold).then_some(BLACK).unwrap_or(WHITE))
@@ -122,7 +126,7 @@ pub fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
     mask
 }
 
-pub fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
+fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
     let mut columns = vec![0; mask.width() as usize];
     let mut rows = vec![0; mask.height() as usize];
     mask.enumerate_pixels().for_each(|(x, y, p)| {

@@ -13,7 +13,7 @@ use imgdup::{
         imghash,
     },
     utils::fsutils::{all_files, clear_dir, path_as_filename, symlink},
-    utils::imgutils::{self, RemoveBordersConf},
+    utils::imgutils::{self, RemoveBordersArgs, RemoveBordersCli},
     utils::plot,
 };
 
@@ -21,13 +21,8 @@ use imgdup::{
 #[command()]
 /// Hash pictures and compare them against each other
 struct Cli {
-    /// All gray values below this becomes black
-    #[arg(long, short = 't', default_value_t = imgutils::DEFAULT_MASKIFY_THRESHOLD)]
-    maskify_threshold: u8,
-
-    /// A mask line can contain this many percent of white and still be considered black
-    #[arg(long, short = 'w', default_value_t = imgutils::DEFAULT_BORDER_MAX_WHITES)]
-    maximum_whites: f64,
+    #[command(flatten)]
+    border_args: RemoveBordersCli,
 
     /// Save all collisions below this distance
     #[arg(long, short = 'c')]
@@ -46,12 +41,7 @@ fn main() -> eyre::Result<()> {
     let pictures: Vec<_> = all_files(&cli.picture_folders)?;
 
     println!("Hashing all pictures...");
-    let hashes = hash_pictures(
-        &pictures,
-        RemoveBordersConf::default()
-            .maskify_threshold(cli.maskify_threshold)
-            .maximum_whites(cli.maximum_whites),
-    )?;
+    let hashes = hash_pictures(&pictures, cli.border_args.to_args())?;
 
     assert_eq!(hashes.len(), pictures.len());
 
@@ -75,7 +65,7 @@ fn main() -> eyre::Result<()> {
 
 fn hash_pictures(
     pictures: &[PathBuf],
-    config: RemoveBordersConf,
+    config: RemoveBordersArgs,
 ) -> image::ImageResult<Vec<Option<Hamming>>> {
     let mut file = BufWriter::new(File::create("empty.txt")?);
     let empty_dir = Path::new("empty");
@@ -86,7 +76,7 @@ fn hash_pictures(
     for (i, pic_path) in pictures.iter().enumerate() {
         println!("Hash: {}/{}", i + 1, total);
         let img = image::open(pic_path)?.to_rgb8();
-        let cropped = imgutils::remove_borders(&img, &config);
+        let cropped = config.remove_borders(&img);
 
         let h = if imgutils::is_subimg_empty(&cropped) {
             println!("Empty: {pic_path:?}");
