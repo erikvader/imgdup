@@ -17,8 +17,8 @@ pub fn is_basename(path: impl AsRef<Path>) -> bool {
     components.next().is_none()
 }
 
-/// Create a symlink with a relative path to `target` at `link_name`.
-/// Both arguments must be relative to the current working directory.
+/// Create a symlink with a relative path to `target` at `link_name`. Both arguments must
+/// be relative to the the same directory, usually the current working directory.
 /// `link_name` must be a path to a file to be created, not a directory to create the file
 /// in.
 pub fn symlink_relative(

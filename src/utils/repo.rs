@@ -98,6 +98,7 @@ impl Entry {
         F: FnOnce(&mut BufWriter<File>) -> eyre::Result<()>,
     {
         let name = name.as_ref();
+        // TODO: should probably be an eyre::ensure?
         assert!(fsutils::is_basename(name));
         let file_path = self.next_path(name);
         let file = fs::OpenOptions::new()
@@ -125,7 +126,7 @@ impl Entry {
         Ok(())
     }
 
-    /// `target` is relative CWD
+    /// `target` and `link` are relative CWD
     pub fn create_link_relative(
         &mut self,
         // TODO: create a `BasenamePath` or something that is a path that must only be a

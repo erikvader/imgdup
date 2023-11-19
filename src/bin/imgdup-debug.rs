@@ -7,32 +7,44 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
-    bin_common::{
-        hash_images,
-        init::{init_eyre, init_logger},
-    },
-    bktree::{source_types::video_source::VidSrc, sqlite::bktree::BKTree},
+    bin_common::init::{init_eyre, init_logger},
+    bktree::{mmap::bktree::BKTree, source_types::video_source::VidSrc},
     frame_extractor::frame_extractor::FrameExtractor,
-    imghash::hamming::{Distance, Hamming},
-    utils::fsutils::{is_simple_relative, remove_dot_dot},
-    utils::repo::Entry,
+    imghash::{
+        hamming::Hamming,
+        preproc::{PreprocArgs, PreprocCli},
+        similarity::{SimiArgs, SimiCli},
+    },
+    utils::{
+        repo::Entry,
+        simple_path::{SimplePath, SimplePathBuf},
+    },
 };
 
 #[derive(Parser, Debug)]
 #[command()]
 /// Dump debug information on a dup
 struct Cli {
-    /// Maximum distance for two images to be considered equal
-    #[arg(long, default_value_t = hash_images::DEFAULT_SIMILARITY_THRESHOLD)]
-    similarity_threshold: Distance,
+    #[command(flatten)]
+    simi_args: SimiCli,
+
+    #[command(flatten)]
+    preproc_args: PreprocCli,
 
     /// Path to the database to use
-    #[arg(long, short = 'f', default_value = "../../imgdup.db")]
+    #[arg(long, short = 'd', default_value = "../../imgdup.db")]
     database_file: PathBuf,
 
     /// The file to compare against all other
     #[arg(long, short = 'r', default_value = "./0000_the_new_one")]
     reference_file: PathBuf,
+
+    /// The repo entry directory to debug, or the repo itself if the flag `all` is given.
+    #[arg(long, short = 'e', default_value = ".")]
+    entry_dir: PathBuf,
+
+    #[arg(long, short = 'A', default_value_t = false)]
+    all: bool,
 }
 
 #[derive(Clone)]
@@ -46,41 +58,50 @@ struct Collision {
     other: Frame,
 }
 
+struct PreprocImage {
+    original: RgbImage,
+    preproc: RgbImage,
+}
+
 fn main() -> eyre::Result<()> {
     init_eyre()?;
     init_logger(None)?;
     let cli = Cli::parse();
 
-    let ref_path = remove_dot_dot(
-        std::fs::read_link(cli.reference_file)
-            .wrap_err("failed to read the referemce file")?,
-    );
-    assert!(is_simple_relative(&ref_path));
+    let simi_args = cli.simi_args.as_args();
+    let preproc_args = cli.preproc_args.as_args();
+
+    let ref_path: SimplePathBuf = {
+        let link = std::fs::read_link(cli.reference_file)
+            .wrap_err("failed to read the reference file")?;
+        SimplePathBuf::unresolve(link)
+            .wrap_err("the link at the reference file is not simple")?
+    };
 
     let root = cli
         .database_file
         .parent()
         .ok_or_else(|| eyre::eyre!("database file path doesn't have a parent path"))?;
 
-    let mut repo_entry = Entry::open(".").wrap_err("failed to open the current dir")?;
-    let mut tree =
-        BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
-            format!(
-                "Failed to open database at: {}",
-                cli.database_file.display()
-            )
-        })?;
+    let mut repo_entry =
+        Entry::open(&cli.entry_dir).wrap_err("failed to open the current dir")?;
+    let tree = BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
+        format!(
+            "Failed to open database at: {}",
+            cli.database_file.display()
+        )
+    })?;
 
     log::info!("Extracting frames for the reference video...");
-    let ref_frames: Vec<Frame> = extract_frames(&mut tree, &ref_path)?;
+    let ref_frames: Vec<Frame> = extract_frames(&tree, &ref_path)?;
     log::info!("Done!");
 
     log::info!("Finding the collisions for all reference frames...");
     let collisions: Vec<Collision> =
-        find_collisions(&ref_frames, &ref_path, &mut tree, cli.similarity_threshold)?;
+        find_collisions(&ref_frames, &ref_path, &tree, &simi_args)?;
     log::info!("Done!");
 
-    tree.close()?;
+    drop(tree);
 
     log::info!(
         "Extracting the frames for all {} collisions...",
@@ -89,14 +110,12 @@ fn main() -> eyre::Result<()> {
     let images: HashMap<VidSrc, RgbImage> = read_images_from_videos(&collisions, root)?;
     log::info!("Done!");
 
+    log::info!("Preprocessing all images...");
+    let images: HashMap<VidSrc, PreprocImage> = preproc_images(images, &preproc_args);
+    log::info!("Done!");
+
     log::info!("Saving everything to the repo entry...");
-    save_collisions(
-        &collisions,
-        &mut repo_entry,
-        root,
-        images,
-        cli.similarity_threshold,
-    )?;
+    save_collisions(&collisions, &mut repo_entry, root, images, &simi_args)?;
     log::info!("Done!");
 
     Ok(())
@@ -106,23 +125,30 @@ fn save_collisions(
     collisions: &[Collision],
     repo_entry: &mut Entry,
     root: &Path,
-    images: HashMap<VidSrc, RgbImage>,
-    similarity_threshold: Distance,
+    images: HashMap<VidSrc, PreprocImage>,
+    simi_args: &SimiArgs,
 ) -> eyre::Result<()> {
     for Collision { other, reference } in collisions {
         let mut entry = repo_entry
             .sub_entry("collision")
             .wrap_err("failed to create collision sub entry")?;
 
-        entry.create_link_relative("collided_with", root.join(other.vidsrc.path()))?;
-        entry.create_jpg(
-            "collided_frame",
-            images.get(&other.vidsrc).expect("should exist"),
-        )?;
-        entry.create_jpg(
-            "reference_frame",
-            images.get(&reference.vidsrc).expect("should exist"),
-        )?;
+        entry.create_link("collided_with", root.join(other.vidsrc.path()))?;
+
+        let PreprocImage {
+            original: other_org,
+            preproc: other_pre,
+        } = images.get(&other.vidsrc).expect("should exist");
+        let PreprocImage {
+            original: ref_org,
+            preproc: ref_pre,
+        } = images.get(&reference.vidsrc).expect("should exist");
+
+        entry.create_jpg("collided_frame", other_org)?;
+        entry.create_jpg("reference_frame", ref_org)?;
+        entry.create_jpg("collided_frame_preproc", other_pre)?;
+        entry.create_jpg("reference_frame_preproc", ref_pre)?;
+
         entry.create_text_file(
             "collided_timestamp",
             other.vidsrc.frame_pos().to_string(),
@@ -131,11 +157,13 @@ fn save_collisions(
             "reference_timestamp",
             reference.vidsrc.frame_pos().to_string(),
         )?;
+
         entry.create_text_file("collided_mirror", other.vidsrc.mirrored().to_string())?;
         entry.create_text_file(
             "reference_mirror",
             reference.vidsrc.mirrored().to_string(),
         )?;
+
         entry.create_text_file("collided_hash", other.hash.to_base64())?;
         entry.create_text_file("reference_hash", reference.hash.to_base64())?;
         entry.create_text_file(
@@ -143,13 +171,14 @@ fn save_collisions(
             format!(
                 "{} <= {}",
                 other.hash.distance_to(reference.hash),
-                similarity_threshold
+                simi_args.threshold()
             ),
         )?;
     }
     Ok(())
 }
 
+// TODO: parallelize somehow, with rayon?
 fn read_images_from_videos(
     collisions: &[Collision],
     root: &Path,
@@ -197,21 +226,21 @@ fn read_images_from_videos(
 
 fn find_collisions(
     ref_frames: &[Frame],
-    ref_path: &Path,
-    tree: &mut BKTree<VidSrc>,
-    similarity_threshold: Distance,
+    ref_path: &SimplePath,
+    tree: &BKTree<VidSrc>,
+    simi_args: &SimiArgs,
 ) -> eyre::Result<Vec<Collision>> {
     let mut collisions = Vec::new();
     for ref_frame in ref_frames {
         tree.find_within(
             ref_frame.hash,
-            similarity_threshold,
+            simi_args.threshold(),
             |other_hash, other_vidsrc| {
                 if ref_path != other_vidsrc.path() {
                     collisions.push(Collision {
                         reference: ref_frame.clone(),
                         other: Frame {
-                            vidsrc: other_vidsrc.clone(),
+                            vidsrc: other_vidsrc.deserialize(),
                             hash: other_hash,
                         },
                     })
@@ -223,17 +252,35 @@ fn find_collisions(
 }
 
 fn extract_frames(
-    tree: &mut BKTree<VidSrc>,
-    ref_path: &Path,
+    tree: &BKTree<VidSrc>,
+    ref_path: &SimplePath,
 ) -> eyre::Result<Vec<Frame>> {
     let mut ref_frames = Vec::new();
     tree.for_each(|hash, vidsrc| {
         if vidsrc.path() == ref_path {
             ref_frames.push(Frame {
-                vidsrc: vidsrc.clone(),
+                vidsrc: vidsrc.deserialize(),
                 hash,
             });
         }
     })?;
     Ok(ref_frames)
+}
+
+fn preproc_images(
+    images: HashMap<VidSrc, RgbImage>,
+    preproc_args: &PreprocArgs,
+) -> HashMap<VidSrc, PreprocImage> {
+    images
+        .into_iter()
+        .map(|(vidsrc, img)| {
+            (
+                vidsrc,
+                PreprocImage {
+                    preproc: preproc_args.preprocess(&img),
+                    original: img,
+                },
+            )
+        })
+        .collect()
 }

@@ -79,6 +79,14 @@ impl ArchivedVidSrc {
             ArchivedMirror::Mirrored => Mirror::Mirrored,
         }
     }
+
+    pub fn deserialize(&self) -> VidSrc {
+        VidSrc {
+            frame_pos: self.frame_pos.deserialize(),
+            path: self.path.deserialize(),
+            mirrored: self.mirrored(),
+        }
+    }
 }
 
 impl super::private::Seal for VidSrc {}

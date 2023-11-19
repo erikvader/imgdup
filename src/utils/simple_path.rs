@@ -107,6 +107,10 @@ impl ArchivedSimplePathBuf {
     pub fn as_simple_path(&self) -> &SimplePath {
         SimplePath::new_str_unchecked(self.inner.as_str())
     }
+
+    pub fn deserialize(&self) -> SimplePathBuf {
+        self.as_simple_path().to_owned()
+    }
 }
 
 impl AsRef<Path> for ArchivedSimplePathBuf {
@@ -164,6 +168,9 @@ impl SimplePath {
     /// get to `target`. Both `self` and `target` should be relative to the same point.
     /// Self must refer to a file, i.e., it can't be the empty path, `None` is returned in
     /// that case.
+    // TODO: target doesn't need to be `SimplePath`, it only needs to be relative. The
+    // downside is that unresolve won't always be correct then. Create another set of
+    // functions that are not as strict?
     pub fn resolve_file_to(&self, target: impl AsRef<SimplePath>) -> Option<PathBuf> {
         if self.is_empty() {
             return None;
