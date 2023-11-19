@@ -43,6 +43,20 @@ impl Repo {
         self.next_entry += 1;
         Entry::open(path).wrap_err("failed to open dir as an entry")
     }
+
+    pub fn entries(&self) -> eyre::Result<Vec<Entry>> {
+        let p = ENTRY_PADDING;
+        let mut entries = Vec::new();
+        for num in 0..self.next_entry {
+            let path = self.path.join(format!("{:0p$}", num));
+            if path.is_dir() {
+                entries.push(Entry::open(&path).wrap_err_with(|| {
+                    format!("failed to open the entry at: {}", path.display())
+                })?);
+            }
+        }
+        Ok(entries)
+    }
 }
 
 impl Entry {
@@ -67,6 +81,10 @@ impl Entry {
             path: dir,
             next_entry,
         })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     fn next_path(&mut self, name: &Path) -> PathBuf {

@@ -16,7 +16,7 @@ use imgdup::{
         similarity::{SimiArgs, SimiCli},
     },
     utils::{
-        repo::Entry,
+        repo::{Entry, Repo},
         simple_path::{SimplePath, SimplePathBuf},
     },
 };
@@ -36,13 +36,14 @@ struct Cli {
     database_file: PathBuf,
 
     /// The file to compare against all other
-    #[arg(long, short = 'r', default_value = "./0000_the_new_one")]
-    reference_file: PathBuf,
+    #[arg(long, short = 'r', default_value = "0000_the_new_one")]
+    reference_filename: PathBuf,
 
     /// The repo entry directory to debug, or the repo itself if the flag `all` is given.
     #[arg(long, short = 'e', default_value = ".")]
     entry_dir: PathBuf,
 
+    /// Debug all entries instead of just the current one
     #[arg(long, short = 'A', default_value_t = false)]
     all: bool,
 }
@@ -71,26 +72,63 @@ fn main() -> eyre::Result<()> {
     let simi_args = cli.simi_args.as_args();
     let preproc_args = cli.preproc_args.as_args();
 
-    let ref_path: SimplePathBuf = {
-        let link = std::fs::read_link(cli.reference_file)
-            .wrap_err("failed to read the reference file")?;
-        SimplePathBuf::unresolve(link)
-            .wrap_err("the link at the reference file is not simple")?
-    };
-
     let root = cli
         .database_file
         .parent()
         .ok_or_else(|| eyre::eyre!("database file path doesn't have a parent path"))?;
 
-    let mut repo_entry =
-        Entry::open(&cli.entry_dir).wrap_err("failed to open the current dir")?;
     let tree = BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
         format!(
             "Failed to open database at: {}",
             cli.database_file.display()
         )
     })?;
+
+    let entries = if cli.all {
+        let repo = Repo::new(&cli.entry_dir)
+            .wrap_err("failed to open a repo at the entry dir")?;
+        repo.entries()?
+    } else {
+        let repo_entry =
+            Entry::open(&cli.entry_dir).wrap_err("failed to open the entry dir")?;
+        vec![repo_entry]
+    };
+
+    for repo_entry in entries {
+        execute_on_entry(
+            &simi_args,
+            &preproc_args,
+            &cli.reference_filename,
+            &tree,
+            &root,
+            repo_entry,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn execute_on_entry(
+    simi_args: &SimiArgs,
+    preproc_args: &PreprocArgs,
+    reference_filename: &Path,
+    tree: &BKTree<VidSrc>,
+    root: &Path,
+    mut repo_entry: Entry,
+) -> eyre::Result<()> {
+    log::info!("Creating debug info at: {}", repo_entry.path().display());
+
+    let ref_path: SimplePathBuf = {
+        let ref_file = repo_entry.path().join(reference_filename);
+        let link = std::fs::read_link(&ref_file).wrap_err_with(|| {
+            format!(
+                "failed to read the reference file at {}",
+                ref_file.display()
+            )
+        })?;
+        SimplePathBuf::unresolve(link)
+            .wrap_err("the link at the reference file is not simple")?
+    };
 
     log::info!("Extracting frames for the reference video...");
     let ref_frames: Vec<Frame> = extract_frames(&tree, &ref_path)?;
@@ -100,8 +138,6 @@ fn main() -> eyre::Result<()> {
     let collisions: Vec<Collision> =
         find_collisions(&ref_frames, &ref_path, &tree, &simi_args)?;
     log::info!("Done!");
-
-    drop(tree);
 
     log::info!(
         "Extracting the frames for all {} collisions...",
