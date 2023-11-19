@@ -69,8 +69,8 @@ fn main() -> eyre::Result<()> {
     init_logger(None)?;
     let cli = Cli::parse();
 
-    let simi_args = cli.simi_args.as_args();
-    let preproc_args = cli.preproc_args.as_args();
+    let simi_args = cli.simi_args.to_args();
+    let preproc_args = cli.preproc_args.to_args();
 
     let root = cli
         .database_file

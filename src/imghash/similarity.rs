@@ -12,7 +12,7 @@ pub struct SimiCli {
 }
 
 impl SimiCli {
-    pub fn as_args(&self) -> SimiArgs {
+    pub fn to_args(&self) -> SimiArgs {
         SimiArgs::default().similarity_threshold(self.similarity_threshold)
     }
 }

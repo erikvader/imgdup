@@ -56,7 +56,7 @@ impl RemoveBordersArgs {
 }
 
 impl RemoveBordersCli {
-    pub fn as_args(&self) -> RemoveBordersArgs {
+    pub fn to_args(&self) -> RemoveBordersArgs {
         RemoveBordersArgs::default()
             .maskify_threshold(self.maskify_threshold)
             .maximum_whites(self.maximum_whites)

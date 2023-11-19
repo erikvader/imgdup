@@ -155,8 +155,8 @@ fn main() -> eyre::Result<()> {
 
     let video_threads: usize = cli.video_threads.get().try_into().expect("should fit");
     let tree_threads: usize = cli.tree_threads.get().try_into().expect("should fit");
-    let preproc_args = cli.preproc_args.as_args();
-    let simi_args = cli.simi_args.as_args();
+    let preproc_args = cli.preproc_args.to_args();
+    let simi_args = cli.simi_args.to_args();
 
     let ignored_hashes = if let Some(ignore_dir) = cli.ignore_dir {
         log::info!("Reading images to ignore from: {}", ignore_dir.display());

@@ -19,8 +19,8 @@ pub struct PreprocCli {
 }
 
 impl PreprocCli {
-    pub fn as_args(&self) -> PreprocArgs {
-        PreprocArgs::default().remove_borders_args(self.border_args.as_args())
+    pub fn to_args(&self) -> PreprocArgs {
+        PreprocArgs::default().remove_borders_args(self.border_args.to_args())
     }
 }
 
