@@ -306,6 +306,7 @@ mod video {
         i: usize,
     ) -> eyre::Result<Vec<(Timestamp, Hamming, Mirror)>> {
         let video: &SimplePath = ctx.new_files.get(i).expect("should be in range");
+        // TODO: den här verkar inte fungera alls, skriver i fel ordning
         log::info!("Progress: {}/{} videos", i + 1, ctx.new_files.len());
         log::info!("Retrieving hashes for: {}", video);
 

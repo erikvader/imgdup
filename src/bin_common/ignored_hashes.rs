@@ -28,6 +28,10 @@ impl Ignored {
             .iter()
             .any(|ign| simi.are_similar(*ign, test_subject))
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = Hamming> + '_ {
+        self.hashes.iter().copied()
+    }
 }
 
 pub fn read_ignored(
