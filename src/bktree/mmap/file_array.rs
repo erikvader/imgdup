@@ -1,7 +1,7 @@
 use std::{
     borrow::Borrow,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
+    io::{self, BufWriter, Seek, SeekFrom, Write},
     path::Path,
     pin::Pin,
 };
@@ -141,14 +141,19 @@ impl<T> From<Ref<T>> for u64 {
 type HEADER = usize;
 const HEADER_SIZE: usize = std::mem::size_of::<HEADER>();
 
+/// A file backed memory area. New values can be appended, but not removed. Zero-copy
+/// deserialization using rkyv. Is not platform-independent since the stored values need
+/// to be aligned for the current platform, endianess, and `usize` is different sizes.
+///
+/// Invariants:
+///   - The buffer in the `BufWriter` must be empty
+///   - The mmap always maps the whole file, padding and all
+///   - The used length is less than or equal to the file length
 pub struct FileArray {
     mmap: MmapMut,
     seri: FileArraySerializer,
 }
 
-/// A file backed memory area. New values can be appended, but not removed. Zero-copy
-/// deserialization using rkyv. Is not platform-independent since the stored values need
-/// to be aligned for the current platform, endianess, and `usize` is different sizes.
 impl FileArray {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         // TODO: flock using fs2?
@@ -180,13 +185,17 @@ impl FileArray {
         file.seek(SeekFrom::Start(
             used_len.try_into().expect("expecting 64 bit arch"),
         ))?;
-        let seri = CompositeSerializer::new(
+        let seri = Self::new_serializer(file, used_len);
+
+        Ok(Self { mmap, seri })
+    }
+
+    fn new_serializer(file: File, used_len: usize) -> FileArraySerializer {
+        CompositeSerializer::new(
             WriteSerializer::with_pos(BufWriter::new(file), used_len),
             FallbackScratch::default(),
             rkyv::Infallible,
-        );
-
-        Ok(Self { mmap, seri })
+        )
     }
 
     #[cfg(test)]
@@ -220,7 +229,7 @@ impl FileArray {
         Self::len_raw(&self.mmap)
     }
 
-    pub fn len_raw(slice: &[u8]) -> usize {
+    fn len_raw(slice: &[u8]) -> usize {
         // TODO: just use a pointer?
         // TODO: use unsafe variants without checkbytes
         Self::get_raw::<HEADER>(slice, Ref::new_usize(HEADER_SIZE))
@@ -249,6 +258,19 @@ impl FileArray {
         let align = std::mem::align_of::<T::Archived>();
         let align_diff = (align - (pos % align)) % align;
         Ref::new_usize(pos + align_diff + std::mem::size_of::<T::Archived>())
+    }
+
+    // TODO: make a unit test for this
+    fn reset_serializer(&mut self) {
+        let used_len = self.len();
+        replace_with::replace_with_or_abort(&mut self.seri, |seri| {
+            // NOTE: none of these should be able to fail, so its safe to use the abort
+            // version of replace_with
+            let (write_seri, _, _) = seri.into_components();
+            let bufwriter = write_seri.into_inner();
+            let (file, _) = bufwriter.into_parts();
+            Self::new_serializer(file, used_len)
+        });
     }
 
     fn with_file<F, R>(&mut self, appl: F) -> R
@@ -307,16 +329,27 @@ impl FileArray {
         B: Borrow<S>,
         S: Serialize<FileArraySerializer>,
     {
-        let mut refs: Vec<Ref<S>> = Vec::new();
+        let refs_res = || -> Result<_> {
+            let mut refs: Vec<Ref<S>> = Vec::new();
 
-        for item in items.into_iter() {
-            // TODO: make sure to always call file.flush() even if this fails? To make
-            // sure nothing is in the buffer.
-            self.seri.serialize_value(item.borrow())?;
-            refs.push(Ref::new_usize(self.seri.pos()));
-        }
+            for item in items.into_iter() {
+                self.seri.serialize_value(item.borrow())?;
+                refs.push(Ref::new_usize(self.seri.pos()));
+            }
 
-        self.with_file(|file| file.flush())?;
+            // TODO: how to make a unit test when flush fails?
+            self.with_file(|buf| buf.flush())?;
+
+            Ok(refs)
+        }();
+
+        let refs = match refs_res {
+            Err(e) => {
+                self.reset_serializer();
+                return Err(e.into());
+            }
+            Ok(refs) => refs,
+        };
 
         if let Some(&last_ref) = refs.last() {
             self.set_len(last_ref.into());
@@ -335,7 +368,6 @@ impl FileArray {
         B: Borrow<S>,
         S: Serialize<FileArraySerializer>,
     {
-        // TODO: write directly into the mmap using `BufferSerializer` or something?
         self.add([item])
             .map(|vec| vec.into_iter().next().expect("should have exactly one"))
     }
