@@ -11,6 +11,7 @@ use rkyv::vec::ArchivedVec;
 use rkyv::{Archive, CheckBytes, Serialize};
 
 use super::file_array::{self, FileArray, Ref};
+use crate::bktree::source_types::any_source::AnySource;
 use crate::bktree::source_types::{PartialSource, Source};
 use crate::imghash::hamming::{Distance, Hamming};
 
@@ -208,6 +209,31 @@ fn init_meta(db: &mut FileArray, source_ident: String) -> file_array::Result<()>
         "The header is not reachable with `ref_to_first`"
     );
     Ok(())
+}
+
+impl BKTree<AnySource> {
+    pub fn downcast<S>(self) -> Result<BKTree<S>>
+    where
+        // NOTE: this should maybe be `Source`, but having it as partial allows
+        // `AnySource` to downcast to itself, which is nice maybe? Akin to `Into`
+        S: PartialSource,
+    {
+        BKTree::new(self.db)
+    }
+}
+
+impl<S> BKTree<S>
+where
+    // NOTE: this should maybe be `Source`, but having it as partial allows `AnySource` to
+    // upcast to itself, which is nice maybe? Akin to `Into`
+    S: PartialSource,
+{
+    pub fn upcast(self) -> BKTree<AnySource> {
+        BKTree {
+            db: self.db,
+            _src: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<S> BKTree<S>

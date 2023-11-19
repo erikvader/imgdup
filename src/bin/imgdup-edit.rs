@@ -35,6 +35,7 @@ struct Cli {
     #[arg(long, short = 'f')]
     database_file: PathBuf,
 
+    // TODO: list the goals in a description
     /// Goals to execute
     #[arg(value_parser = goal_parser, required = true)]
     goals: Vec<Goal>,
@@ -86,8 +87,19 @@ fn main() -> eyre::Result<()> {
                 }
                 Err(e) => Err(e),
             },
-            Goal::Purge { ref dir } => todo!(), // TODO: how to handle that this needs `VidSrc`? //goal_purge(&mut tree, &dir, &preproc_args),
-            Goal::List { ref file } => todo!(), // TODO: same here // goal_list(&tree, &file),
+            Goal::Purge { ref dir } => {
+                // TODO: create a macro for this temporary downcasting
+                let mut vid_tree = tree.downcast().wrap_err("failed to downcast")?;
+                let res = goal_purge(&mut vid_tree, &dir, &preproc_args, &simi_args);
+                tree = vid_tree.upcast();
+                res
+            }
+            Goal::List { ref file } => {
+                let vid_tree = tree.downcast().wrap_err("failed to downcast")?;
+                let res = goal_list(&vid_tree, &file);
+                tree = vid_tree.upcast();
+                res
+            }
         }
         .wrap_err_with(|| format!("failed to perform goal '{goal:?}'"))?;
         log::info!("Done with goal: {goal:?}");
