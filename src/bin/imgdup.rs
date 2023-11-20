@@ -252,6 +252,10 @@ mod video {
         num_threads: usize,
     ) -> eyre::Result<()> {
         assert!(num_threads >= 1);
+        // TODO: should the video side really use rayon? Doesn't feel like its right. What
+        // if some other operation, like imgutils, uses rayon for something? They would
+        // clash and fight for the threads. Spawn the threads manually and use the
+        // `WorkQueue` again?
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .thread_name(|i| format!("V{i:03}"))

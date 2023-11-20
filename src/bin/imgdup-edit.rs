@@ -161,6 +161,7 @@ fn goal_purge(
         let matched = ignored.iter().any(|ign| simi_args.are_similar(ign, hash));
 
         if matched {
+            // TODO: also print the timestamp. Have a nice general Display for vidsrc?
             log::debug!("Removing a frame with source: {}", vidsrc.path());
             count += 1;
         }

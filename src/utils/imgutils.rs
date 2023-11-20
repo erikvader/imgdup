@@ -126,6 +126,8 @@ fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
     mask
 }
 
+// TODO: use https://crates.io/crates/nalgebra or https://crates.io/crates/ndarray instead
+// of manually looping to speed things up?
 fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
     let mut columns = vec![0; mask.width() as usize];
     let mut rows = vec![0; mask.height() as usize];

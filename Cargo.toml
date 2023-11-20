@@ -52,5 +52,8 @@ tempfile = "3"
 opt-level = 3
 
 [profile.release]
-strip = "debuginfo"
+# NOTE: its nice to have debuginfo
+# strip = "debuginfo"
+
+# NOTE: optimizes between crates
 lto = "thin"
