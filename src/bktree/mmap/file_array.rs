@@ -175,8 +175,6 @@ impl FileArray {
         // TODO: how to handle the signal that gets sent when the mapped file becomes
         // unavailable? Just return errors instead of crashing at least. SIGBUS
         let mmap = unsafe { MmapMut::map_mut(&file)? };
-        mmap.advise(memmap2::Advice::Random)?;
-        mmap.advise(memmap2::Advice::DontFork)?;
 
         let total_len = mmap.len();
         assert!(total_len >= HEADER_SIZE);
@@ -315,7 +313,6 @@ impl FileArray {
 
         self.with_file(|file| file.get_mut().set_len(new_len_u64))?;
         unsafe {
-            // TODO: are the advices preserved?
             self.mmap
                 .remap(new_len, memmap2::RemapOptions::new().may_move(true))?;
         }
