@@ -462,6 +462,7 @@ mod tree {
         num_threads: usize,
     ) -> eyre::Result<()> {
         assert!(num_threads >= 1);
+        // TODO: remove this threadpool and just use the global one?
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .thread_name(|i| format!("T{i:03}"))
