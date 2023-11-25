@@ -9,7 +9,7 @@ pub const WHITE: u8 = u8::MAX;
 pub const BLACK: u8 = u8::MIN;
 
 pub const DEFAULT_MASKIFY_THRESHOLD: u8 = 40;
-pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.03;
+pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.1;
 
 #[derive(Args, Debug)]
 pub struct RemoveBordersCli {
@@ -129,6 +129,8 @@ fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
 // TODO: use https://crates.io/crates/nalgebra or https://crates.io/crates/ndarray instead
 // of manually looping to speed things up?
 fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
+    let maximum_whites = maximum_whites.max(0.0);
+
     let mut columns = vec![0; mask.width() as usize];
     let mut rows = vec![0; mask.height() as usize];
     mask.enumerate_pixels().for_each(|(x, y, p)| {
@@ -138,29 +140,31 @@ fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
         }
     });
 
-    fn find_border(counts: &[u64], maximum_whites: f64) -> Option<u32> {
-        if counts.is_empty() {
+    let max_col = columns.iter().max().copied().unwrap_or(0);
+    let max_row = rows.iter().max().copied().unwrap_or(0);
+
+    let find_border = |axle: &[u64], axle_max: u64| -> Option<u32> {
+        if axle.is_empty() || axle_max == 0 {
             return None;
         }
 
-        let len = counts.len() as f64;
-        counts
-            .iter()
+        let axle_max = axle_max as f64;
+        axle.iter()
             .enumerate()
-            .skip_while(|(_, &w)| ((w as f64) / len) <= maximum_whites)
+            .skip_while(|(_, &w)| ((w as f64) / axle_max) <= maximum_whites)
             .map(|(i, _)| i as u32)
             .next()
-    }
+    };
 
-    let left = find_border(&columns, maximum_whites).unwrap_or(0);
+    let left = find_border(&columns, max_col).unwrap_or(0);
     columns.reverse();
-    let width = find_border(&columns, maximum_whites)
+    let width = find_border(&columns, max_col)
         .map(|right| columns.len() as u32 - right - left)
         .unwrap_or(0);
 
-    let top = find_border(&rows, maximum_whites).unwrap_or(0);
+    let top = find_border(&rows, max_row).unwrap_or(0);
     rows.reverse();
-    let height = find_border(&rows, maximum_whites)
+    let height = find_border(&rows, max_row)
         .map(|bottom| rows.len() as u32 - bottom - top)
         .unwrap_or(0);
 
