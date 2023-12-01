@@ -1,0 +1,16 @@
+# Will do exactly the same thing as the real deal, but with fewer video files
+
+default:
+    @just --list --justfile '{{justfile()}}'
+
+# Removes all generated files
+reset:
+    rm -vrf imgdup.db imgdup.db.backup _DUPS_/* _GRAVEYARD_/*
+
+mkdirs:
+    mkdir -p _GRAVEYARD_ _DUPS_
+
+run: reset run-no-reset
+
+run-no-reset: mkdirs
+    cargo run --release --bin imgdup

@@ -4,4 +4,3 @@
 --ignore-dir _IMGDUP_IGNORE_
 --graveyard-dir _GRAVEYARD_
 --video-threads 6
---tree-threads 2
