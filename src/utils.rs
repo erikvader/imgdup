@@ -6,3 +6,4 @@ pub mod priority_queue;
 pub mod repo;
 pub mod simple_path;
 pub mod work_queue;
+pub mod workers;

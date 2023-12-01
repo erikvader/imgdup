@@ -1,6 +1,4 @@
-// TODO: remove this module?
-
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 pub struct WorkQueue<T> {
     work: Vec<T>,
@@ -20,11 +18,19 @@ impl<T> WorkQueue<T> {
     }
 
     pub fn next_index(&self) -> Option<(usize, &T)> {
-        let cur = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let cur = self.next.fetch_add(1, SeqCst);
         self.work.get(cur).map(|t| (cur, t))
     }
 
     pub fn len(&self) -> usize {
         self.work.len()
+    }
+
+    pub fn stop(&self) {
+        self.next.store(self.len(), SeqCst);
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.next.load(SeqCst) >= self.len()
     }
 }
