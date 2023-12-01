@@ -25,7 +25,7 @@ pub fn init_logger(logfile: Option<&Path>) -> eyre::Result<()> {
     builder.set_location_level(LevelFilter::Trace);
 
     builder.set_level_padding(LevelPadding::Right);
-    builder.set_thread_padding(ThreadPadding::Right(4));
+    builder.set_thread_padding(ThreadPadding::Right(3));
 
     builder.set_thread_mode(ThreadLogMode::Both);
 

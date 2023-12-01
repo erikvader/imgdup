@@ -50,6 +50,7 @@ pub struct FrameExtractor<'a> {
     path: Cow<'a, Path>,
 }
 
+// TODO: save the current file in thread local variable and use it in the logger
 impl<'a> FrameExtractor<'a> {
     pub fn new<P: Into<Cow<'a, Path>>>(path: P) -> Result<Self> {
         if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| {

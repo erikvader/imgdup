@@ -1,3 +1,6 @@
+// TODO: use tracing instead of log to get easier to read log messages? Difficult to see
+// where all ffmpeg stuff is coming from.
+
 pub mod bin_common;
 pub mod bktree;
 pub mod frame_extractor;
