@@ -4,7 +4,6 @@ use std::{
     num::NonZeroU32,
     path::PathBuf,
     sync::{mpsc, Mutex},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -12,7 +11,11 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use common::Payload;
 use image::RgbImage;
-use imgdup::utils::simple_path::SimplePath;
+use imgdup::utils::{
+    simple_path::SimplePath,
+    work_queue::WorkQueue,
+    workers::{scoped_workers, FinishedWorker},
+};
 use imgdup::{bin_common::ignored_hashes::read_ignored, imghash::preproc::PreprocArgs};
 use imgdup::{bin_common::ignored_hashes::Ignored, imghash::similarity::SimiArgs};
 use imgdup::{
@@ -36,7 +39,10 @@ use rayon::prelude::*;
 #[derive(Parser, Debug)]
 #[command()]
 /// Finds duplicate videos
+/// This uses rayon, so the `RAYON_NUM_THREADS` environment variable might be of interest.
 struct Cli {
+    // TODO: is the hassle of these flattened args worth it? Will i ever want to change
+    // them this frequently from the default?
     #[command(flatten)]
     simi_args: SimiCli,
 
@@ -46,10 +52,6 @@ struct Cli {
     /// Use this many threads to read video files
     #[arg(long, short = 'j', default_value = "1")]
     video_threads: NonZeroU32,
-
-    /// Use this many threads to search in the tree
-    #[arg(long, short = 't', default_value = "1")]
-    tree_threads: NonZeroU32,
 
     /// Only process up to this many new video files
     #[arg(long, default_value_t = usize::MAX)]
@@ -154,7 +156,6 @@ fn main() -> eyre::Result<()> {
     tree.remove_any_of(|_, vidsrc| removed_files.contains(vidsrc.path()))?;
 
     let video_threads: usize = cli.video_threads.get().try_into().expect("should fit");
-    let tree_threads: usize = cli.tree_threads.get().try_into().expect("should fit");
     let preproc_args = cli.preproc_args.to_args();
     let simi_args = cli.simi_args.to_args();
 
@@ -168,6 +169,8 @@ fn main() -> eyre::Result<()> {
     log::info!("Ignoring {} images", ignored_hashes.len());
 
     log::info!("Processing {} new files", new_files.len());
+    let new_files = WorkQueue::new(new_files);
+
     let repo_dup = Repo::new(cli.dup_dir).wrap_err("failed to create the dup repo")?;
     let repo_grave = if let Some(grave) = cli.graveyard_dir {
         Some(Mutex::new(
@@ -177,49 +180,36 @@ fn main() -> eyre::Result<()> {
         None
     };
 
-    thread::scope(|s| {
+    let finished_workers = scoped_workers(|s| {
         let (tx, rx) = mpsc::sync_channel::<Payload>(16);
-        let handles = vec![
-            (
-                "Vmai",
-                s.spawn(|| {
-                    video::main(
-                        video::Ctx {
-                            preproc_args: &preproc_args,
-                            simi_args: &simi_args,
-                            ignored_hashes: &ignored_hashes,
-                            new_files: &new_files,
-                            repo_grave: repo_grave.as_ref(),
-                        },
-                        tx,
-                        video_threads,
-                    )
-                }),
-            ),
-            (
-                "Tmai",
-                s.spawn(|| {
-                    tree::main(
-                        tree::Ctx {
-                            simi_args: &simi_args,
-                        },
-                        rx,
-                        tree,
-                        repo_dup,
-                        tree_threads,
-                    )
-                }),
-            ),
-        ];
 
-        for (name, handle) in handles {
-            match handle.join() {
-                Err(_) => log::error!("Thread '{name}' panicked"),
-                Ok(Err(e)) => log::error!("Thread '{name}' returned an error: {e:?}"),
-                Ok(Ok(())) => (),
-            }
+        let video_ctx = video::Ctx {
+            preproc_args: &preproc_args,
+            simi_args: &simi_args,
+            ignored_hashes: &ignored_hashes,
+            new_files: &new_files,
+            repo_grave: repo_grave.as_ref(),
+        };
+
+        for _ in 0..video_threads {
+            let tx = tx.clone();
+            s.spawn("V", move || video::main(video_ctx, tx));
         }
+        drop(tx);
+
+        let tree_ctx = tree::Ctx {
+            simi_args: &simi_args,
+        };
+        s.spawn("T", move || tree::main(tree_ctx, rx, tree, repo_dup));
     });
+
+    for FinishedWorker { result, name } in finished_workers {
+        match result {
+            Err(panic) => log::error!("Thread '{name}' panicked with: {panic}"),
+            Ok(Err(e)) => log::error!("Thread '{name}' returned an error: {e:?}"),
+            Ok(Ok(())) => (),
+        }
+    }
 
     Ok(())
 }
@@ -242,76 +232,58 @@ mod video {
         pub preproc_args: &'env PreprocArgs,
         pub simi_args: &'env SimiArgs,
         pub ignored_hashes: &'env Ignored,
-        pub new_files: &'env [&'env SimplePath],
+        pub new_files: &'env WorkQueue<&'env SimplePath>,
         pub repo_grave: Option<&'env Mutex<Repo>>,
     }
 
     pub fn main<'env>(
         ctx: Ctx<'env>,
         tx: mpsc::SyncSender<Payload<'env>>,
-        num_threads: usize,
     ) -> eyre::Result<()> {
-        assert!(num_threads >= 1);
-        // TODO: should the video side really use rayon? Doesn't feel like its right. What
-        // if some other operation, like imgutils, uses rayon for something? They would
-        // clash and fight for the threads. Spawn the threads manually and use the
-        // `WorkQueue` again?
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .thread_name(|i| format!("V{i:03}"))
-            .build()
-            .wrap_err("failed to create thread pool")?;
-
-        pool.install(|| pool_main(ctx, tx));
-        Ok(())
-    }
-
-    fn pool_main<'env>(ctx: Ctx<'env>, tx: mpsc::SyncSender<Payload<'env>>) {
         log::debug!("video worker working");
-        let failed: Vec<(&'env SimplePath, eyre::Report)> = (0..ctx.new_files.len())
-            .into_par_iter()
-            .map(|i| {
-                (
-                    *ctx.new_files.get(i).expect("should be in range"),
-                    get_hashes(ctx, i),
-                )
-            })
-            .map_with(tx, |tx, (vid_path, res)| match res {
-                Ok(hashes) => {
-                    let load = Payload {
-                        video_path: vid_path,
-                        hashes,
-                    };
-                    if !try_send(tx, load) {
-                        return None;
-                    }
-                    Some(None)
-                }
+
+        let mut failed = Vec::new();
+
+        while let Some((i, vid_path)) = ctx.new_files.next_index() {
+            log::info!("Progress: {}/{} videos", i + 1, ctx.new_files.len());
+            let hashes = match get_hashes(ctx, vid_path) {
+                Ok(ok) => ok,
                 Err(e) => {
                     log::error!("Failed to get the hashes from '{}': {:?}", vid_path, e);
-                    Some(Some((vid_path, e)))
+                    failed.push((vid_path, e));
+                    continue;
                 }
-            })
-            .while_some()
-            .filter_map(std::convert::identity)
-            .collect();
+            };
+
+            let load = Payload {
+                video_path: vid_path,
+                hashes,
+            };
+            if !try_send(&tx, load) {
+                log::error!("The tree thread seems to be down");
+                break;
+            }
+        }
+
+        log::debug!("video worker ended");
 
         if !failed.is_empty() {
-            log::error!("Summary of videos that errored:");
+            let mut lines = vec!["Summary of videos that errored:".to_string()];
+            lines.extend(
+                failed
+                    .into_iter()
+                    .map(|(path, error)| format!("'{path}': {error:?}")),
+            );
+            eyre::bail!(lines.join("\n"));
         }
-        for (path, error) in failed {
-            log::error!("'{}': {:?}", path, error);
-        }
-        log::debug!("video worker ended");
+
+        Ok(())
     }
 
     fn get_hashes<'env>(
         ctx: Ctx<'env>,
-        i: usize,
+        video: &'env SimplePath,
     ) -> eyre::Result<Vec<(Timestamp, Hamming, Mirror)>> {
-        let video: &SimplePath = ctx.new_files.get(i).expect("should be in range");
-        // TODO: den här verkar inte fungera alls, skriver i fel ordning
-        log::info!("Progress: {}/{} videos", i + 1, ctx.new_files.len());
         log::info!("Retrieving hashes for: {}", video);
 
         let mut extractor = FrameExtractor::new(video.as_path())
@@ -437,7 +409,6 @@ mod video {
             Err(mpsc::TrySendError::Disconnected(load)) => Err(load),
         } {
             if let Err(_) = tx.send(load) {
-                log::error!("The tree thread seems to be down");
                 return false;
             }
         }
@@ -454,26 +425,8 @@ mod tree {
         pub simi_args: &'env SimiArgs,
     }
 
-    pub fn main<'env>(
-        ctx: Ctx<'env>,
-        rx: mpsc::Receiver<Payload<'env>>,
-        tree: BKTree<VidSrc>,
-        repo: Repo,
-        num_threads: usize,
-    ) -> eyre::Result<()> {
-        assert!(num_threads >= 1);
-        // TODO: remove this threadpool and just use the global one?
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .thread_name(|i| format!("T{i:03}"))
-            .build()
-            .wrap_err("failed to create thread pool")?;
-
-        pool.install(|| pool_main(ctx, rx, tree, repo))
-    }
-
     // TODO: handle ctrl+c and properly close the db
-    fn pool_main<'env>(
+    pub fn main<'env>(
         ctx: Ctx<'env>,
         rx: mpsc::Receiver<Payload<'env>>,
         mut tree: BKTree<VidSrc>,
@@ -481,6 +434,7 @@ mod tree {
     ) -> eyre::Result<()> {
         log::debug!("Tree worker working");
 
+        // TODO: timea de olika stegen och kolla vilken som är långsammast
         while let Ok(Payload { video_path, hashes }) = rx.recv() {
             log::info!("Finding dups of: {}", video_path);
             let similar_videos = find_similar_videos(ctx, &hashes, &mut tree)
@@ -505,6 +459,7 @@ mod tree {
         log::info!("Closed!");
 
         log::debug!("Tree worker not working");
+
         Ok(())
     }
 
