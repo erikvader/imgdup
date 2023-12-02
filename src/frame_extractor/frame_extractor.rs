@@ -1,6 +1,7 @@
 extern crate ffmpeg_next as ffmpeg;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -27,7 +28,7 @@ pub type Result<T> = eyre::Result<T>;
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
     OnceLock::new();
 
-pub struct FrameExtractor<'a> {
+pub struct FrameExtractor {
     // TODO: probably split into several structs
     // ffmpeg contexts
     ictx: FormatContext,
@@ -44,15 +45,26 @@ pub struct FrameExtractor<'a> {
     timebase: Rational,
     video_stream_index: usize,
     orientation: Orientation,
-
-    // the file name
-    // TODO: why not just save a `&'a Path`? Or a `T: AsRef<Path>`? This `Cow` feels weird
-    path: Cow<'a, Path>,
 }
 
-// TODO: save the current file in thread local variable and use it in the logger
-impl<'a> FrameExtractor<'a> {
-    pub fn new<P: Into<Cow<'a, Path>>>(path: P) -> Result<Self> {
+thread_local! {
+    static PATH: RefCell<PathBuf> = RefCell::new(PathBuf::new());
+}
+
+impl FrameExtractor {
+    // NOTE: Its a little bit ugly that this takes ownership of the path, it should take a
+    // reference, but its used in a thread_local that a ffmpeg callback function is using
+    // to add what file produced the log message. And also to `Result` messages as
+    // context, but the upstream function could do that instead, which is better because
+    // it could add them in one spot.
+
+    // TODO: I don't like that this whole module logs. The `next` method could maybe
+    // return either a frame or a log message that was produced when retrieving the next
+    // frame? It would make things more flexible, but also a little bit messier to
+    // implement, which is why it hasn't been done that way currently. Another maybe
+    // better solution is to provide a callback closure that gets called everytime there
+    // is a log message?
+    pub fn new<P: Into<PathBuf>>(path: P) -> Result<Self> {
         if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| {
             ffmpeg::init()?;
             ffmpeglog::set_level(ffmpeglog::Level::Warning);
@@ -64,10 +76,14 @@ impl<'a> FrameExtractor<'a> {
             return Err(e).wrap_err("Failed to initialize ffmpeg");
         }
 
-        let path = path.into();
-        let mut s =
-            Self::new_inner(&path).wrap_err_with(|| format!("on file {:?}", path))?;
-        s.path = path; // NOTE: ugly workaround to avoid copying the path
+        // NOTE: This is the only place where this is set, it is only read everywhere
+        // else. This assumes that there is only one frame extractor running per thread,
+        // else one of them would use the wrong path. They shouldn't be able to clash with
+        // each other and cause panics.
+        PATH.set(path.into());
+        let s = PATH.with_borrow(|path| {
+            Self::new_inner(&path).wrap_err_with(|| format!("on file {:?}", path))
+        })?;
         Ok(s)
     }
 
@@ -124,7 +140,6 @@ impl<'a> FrameExtractor<'a> {
             first_timestamp,
             timebase,
             orientation,
-            path: PathBuf::new().into(),
         })
     }
 
@@ -144,7 +159,7 @@ impl<'a> FrameExtractor<'a> {
 
     pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
         self.next_inner()
-            .wrap_err_with(|| format!("on file {:?}", self.path))
+            .wrap_err_with(|| PATH.with_borrow(|path| format!("on file {:?}", path)))
     }
 
     fn next_inner(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
@@ -184,7 +199,13 @@ impl<'a> FrameExtractor<'a> {
                     *cur_timestamp = ts;
                 } else {
                     let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
-                    log::warn!("Frame doesn't have a timestamp somewhere after: {}", dur);
+                    PATH.with_borrow(|path| {
+                        log::warn!(
+                            "Frame doesn't have a timestamp somewhere after: {} ({})",
+                            dur,
+                            path.display()
+                        )
+                    });
                     continue;
                 }
 
@@ -211,7 +232,12 @@ impl<'a> FrameExtractor<'a> {
                         match decoder.send_packet(&packet) {
                             Ok(()) => break,
                             Err(e) => {
-                                log::error!("Failed to decode frame: {e}");
+                                PATH.with_borrow(|path| {
+                                    log::error!(
+                                        "Failed to decode frame: {e} ({})",
+                                        path.display()
+                                    )
+                                });
                                 continue;
                             }
                         }
@@ -281,8 +307,9 @@ impl<'a> FrameExtractor<'a> {
             ..
         } = self;
 
-        seek(ictx, *video_stream_index, target, ..)
-            .wrap_err_with(|| format!("Failed to seek on file {:?}", self.path))?;
+        seek(ictx, *video_stream_index, target, ..).wrap_err_with(|| {
+            PATH.with_borrow(|path| format!("Failed to seek on file {:?}", path))
+        })?;
         decoder.flush();
         *seek_target_timestamp = target;
         Ok(())
@@ -325,6 +352,7 @@ fn get_orientation(video: &ffmpeg::Stream) -> Orientation {
                 0 => Orientation::Normal,
                 180 | -180 => Orientation::Upside,
                 x => {
+                    // TODO: should this even be logged?
                     log::warn!("Weird orientation angle: {x}");
                     Orientation::Normal
                 }
@@ -344,11 +372,11 @@ fn undo_rotation(img: RgbImage, ori: Orientation) -> RgbImage {
     }
 }
 
-pub struct FrameExtractorIter<'a, 'p> {
-    extractor: &'a mut FrameExtractor<'p>,
+pub struct FrameExtractorIter<'a> {
+    extractor: &'a mut FrameExtractor,
 }
 
-impl Iterator for FrameExtractorIter<'_, '_> {
+impl Iterator for FrameExtractorIter<'_> {
     type Item = Result<(Timestamp, RgbImage)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -356,8 +384,8 @@ impl Iterator for FrameExtractorIter<'_, '_> {
     }
 }
 
-impl<'a, 'p> FrameExtractor<'p> {
-    pub fn iter(&'a mut self) -> FrameExtractorIter<'a, 'p> {
+impl<'a> FrameExtractor {
+    pub fn iter(&'a mut self) -> FrameExtractorIter<'a> {
         FrameExtractorIter { extractor: self }
     }
 }
@@ -444,7 +472,7 @@ fn seek<R: ffmpeg::util::range::Range<i64>>(
     }
 }
 
-impl fmt::Debug for FrameExtractor<'_> {
+impl fmt::Debug for FrameExtractor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             first_timestamp,
@@ -452,11 +480,11 @@ impl fmt::Debug for FrameExtractor<'_> {
             timebase,
             cur_timestamp,
             seek_target_timestamp,
-            path,
             ..
         } = self;
 
-        f.debug_struct("FrameExtractor::Active")
+        let mut debug_struct = f.debug_struct("FrameExtractor::Active");
+        debug_struct
             .field("first_ts", first_timestamp)
             .field("last_ts", end_timestamp)
             .field("cur_ts", cur_timestamp)
@@ -464,9 +492,11 @@ impl fmt::Debug for FrameExtractor<'_> {
                 "tb",
                 &format_args!("{}/{}", timebase.numerator(), timebase.denominator()),
             )
-            .field("seek_ts", seek_target_timestamp)
-            .field("path", path)
-            .finish()
+            .field("seek_ts", seek_target_timestamp);
+
+        PATH.with_borrow(|path| debug_struct.field("path", path));
+
+        debug_struct.finish()
     }
 }
 
@@ -554,5 +584,7 @@ unsafe extern "C" fn ffmpeg_log_adaptor(
         Err(_) => log::Level::Info,
     };
 
-    log::log!(target: &target, level, "{rust_str}");
+    PATH.with_borrow(
+        |path| log::log!(target: &target, level, "{rust_str} ({})", path.display()),
+    );
 }
