@@ -1,0 +1,15 @@
+[env]
+# NOTE: This "fixes" version incompatibilities with ffmpeg-next-sys and globally installed
+# ffmpeg. My ffmpeg updated to 6.1 which broke the rust lib which still is at 6.0. So the
+# "fix" is to refer to an older version that firefox or something is really slow to update
+# from. Arch provides a special package for that, and this environment variable prepends
+# (replaces?) a path for the tool `pkgconfig`, which the build script for ffmpeg-next-sys
+# uses.
+PKG_CONFIG_PATH = "/usr/lib/ffmpeg4.4/pkgconfig"
+
+# NOTE: These will make the build script download and build ffmpeg with the correct
+# version, and also to link it statically, dramatically increasing the binary size. It is
+# for some reason not possible to statically link all ffmpeg libs, i think, so i don't
+# dare to use these.
+#CARGO_FEATURE_STATIC = "yes"
+#CARGO_FEATURE_BUILD = "yes"
