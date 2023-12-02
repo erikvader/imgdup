@@ -1,0 +1,14 @@
+# Make sure that the very first frame is ignored and is placed in the graveyard.
+
+default:
+    @just --list --justfile '{{justfile()}}'
+
+# Removes all generated files
+reset:
+    rm -vrf imgdup.db imgdup.db.backup _DUPS_/* _GRAVEYARD_/*
+
+mkdirs:
+    mkdir -p _GRAVEYARD_ _DUPS_
+
+run: reset mkdirs
+    cargo run --release --bin imgdup

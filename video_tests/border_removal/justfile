@@ -1,0 +1,25 @@
+# This test just runs border removal on all pics and outputs the results and intermediate
+# steps for debugging.
+
+default:
+    @just --list --justfile '{{justfile()}}'
+
+reset:
+    rm -vrf output/* masks/*
+
+mkdirs:
+    mkdir -p output masks
+
+run: reset mkdirs
+    #!/bin/bash
+    set -eu
+
+    EXE=../../target/release/border_remover
+    cargo build --bin border_remover --release
+
+    for pic in pics/*.jpg; do
+        fname=$(basename "$pic" .jpg)
+        echo "file: $fname"
+        "$EXE" -o "masks/$fname.png" --maskify "$@" "$pic" >/dev/null
+        "$EXE" -o "output/$fname.jpg" "$@" "$pic"
+    done

@@ -1,0 +1,28 @@
+default:
+    @just --list --justfile '{{justfile()}}'
+
+# https://www.youtube.com/watch?v=pHvP71rwYAc
+videonormal := '10 Minute Timer (count-up stopwatch) [pHvP71rwYAc].webm'
+
+# The first five seconds have been removed but with timestamps preserved, so the first
+# timestamp in the video starts at 5, not 0.
+videoshifted := '10 Minute Timer (count-up stopwatch) [pHvP71rwYAc] shifted.webm'
+
+# Removes all generated files
+reset:
+    rm -vrf frames_normal frames_shifted frames_last
+
+run: reset run-normal run-shifted run-last
+
+# 10 frames with the timer in the images counting up from 0
+run-normal:
+    cargo run --bin frame_extractor -- --step 1s --outdir frames_normal --num 10 "{{videonormal}}"
+
+# 10 frames with the timer in the images counting up from 5, but the timestamp in the
+# filename starts at 0.
+run-shifted:
+    cargo run --bin frame_extractor -- --step 1s --outdir frames_shifted --num 10 "{{videoshifted}}"
+
+# Make sure the very last frame can be extracted
+run-last:
+    cargo run --bin frame_extractor -- --step 0s --outdir frames_last --offset '9min 58s' --num 10000 "{{videonormal}}"
