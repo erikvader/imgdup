@@ -196,8 +196,12 @@ where
         Ok(())
     }
 
-    pub fn sync_to_disk(&self) -> Result<()> {
-        Ok(self.db.sync_to_disk()?)
+    /// Its totally safe to just drop to save and close, but this function also makes sure
+    /// the file is as small as possible by removing any padding, and is synced to disk.
+    pub fn close(mut self) -> Result<()> {
+        self.db.truncate()?;
+        self.db.sync_to_disk()?;
+        Ok(())
     }
 }
 

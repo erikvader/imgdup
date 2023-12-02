@@ -105,8 +105,7 @@ fn main() -> eyre::Result<()> {
         log::info!("Done with goal: {goal:?}");
     }
 
-    tree.sync_to_disk()
-        .wrap_err("Failed to sync the tree to disk")?;
+    tree.close().wrap_err("Failed to close the tree")?;
 
     Ok(())
 }

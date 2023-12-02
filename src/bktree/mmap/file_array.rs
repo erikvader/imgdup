@@ -303,6 +303,13 @@ impl FileArray {
         )
     }
 
+    pub fn truncate(&mut self) -> Result<()> {
+        if self.len() != self.mmap.len() {
+            self.reserve_internal(0, self.len())?;
+        }
+        Ok(())
+    }
+
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         self.reserve_internal(additional, self.mmap.len())
     }
@@ -353,8 +360,8 @@ impl FileArray {
         }
 
         if self.len() > self.mmap.len() {
-            const GROWTH: usize = 1 << 13;
-            self.reserve_internal(GROWTH, self.len())?;
+            let growth: usize = std::cmp::max(1 << 13 /*8K*/, self.len());
+            self.reserve_internal(growth, self.len())?;
         }
 
         Ok(refs)

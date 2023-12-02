@@ -453,9 +453,7 @@ mod tree {
         }
 
         log::info!("Closing the tree");
-        tree.sync_to_disk()
-            .wrap_err("failed to sync the tree to disk")?;
-        drop(tree);
+        tree.close().wrap_err("failed to close the tree")?;
         log::info!("Closed!");
 
         log::debug!("Tree worker not working");

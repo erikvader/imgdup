@@ -16,6 +16,7 @@ pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 23;
 pub struct PreprocCli {
     #[command(flatten)]
     border_args: RemoveBordersCli,
+    // TODO: filter som kollar om bilderna bara är typ 90% av samma färg
 }
 
 impl PreprocCli {
