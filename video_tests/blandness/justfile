@@ -1,0 +1,7 @@
+default:
+    @just --list --justfile '{{justfile()}}'
+
+run:
+    #!/bin/bash
+    set -eu
+    cargo run --release --bin blandness -- bland/* interesting/* 2>/dev/null

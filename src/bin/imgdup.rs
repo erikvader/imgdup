@@ -322,7 +322,7 @@ mod video {
                         hashes.push((ts, hash, Mirror::Mirrored));
                     }
                 }
-                res @ F::Ignored | res @ F::Empty if ctx.repo_grave.is_some() => {
+                err if ctx.repo_grave.is_some() => {
                     let entry =
                         graveyard_entry.get_or_try_init(|| -> eyre::Result<_> {
                             let mut entry =
@@ -332,7 +332,7 @@ mod video {
                         })?;
 
                     entry.create_jpg(
-                        format!("{}_{}.jpg", res.name(), ts.to_string()),
+                        format!("{}_{}.jpg", err.name(), ts.to_string()),
                         &frame,
                     )?;
                 }
@@ -348,6 +348,8 @@ mod video {
 
     enum FrameToHashResult {
         Empty,
+        TooBlack,
+        TooBland,
         Ignored,
         TooSimilarToPrevious,
         Ok(Hamming),
@@ -357,6 +359,8 @@ mod video {
         fn name(&self) -> &'static str {
             match self {
                 FrameToHashResult::Empty => "empty",
+                FrameToHashResult::TooBlack => "too_black",
+                FrameToHashResult::TooBland => "too_bland",
                 FrameToHashResult::Ignored => "ignored",
                 FrameToHashResult::TooSimilarToPrevious => "similar_previous",
                 FrameToHashResult::Ok(_) => "ok",
@@ -372,6 +376,8 @@ mod video {
         let hash = match ctx.preproc_args.hash_img(&frame) {
             Ok(hash) => hash,
             Err(PreprocError::Empty) => return FrameToHashResult::Empty,
+            Err(PreprocError::TooBlack) => return FrameToHashResult::TooBlack,
+            Err(PreprocError::TooBland) => return FrameToHashResult::TooBland,
         };
 
         if ctx.ignored_hashes.is_ignored(ctx.simi_args, hash) {

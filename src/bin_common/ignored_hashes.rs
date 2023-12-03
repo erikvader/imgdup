@@ -56,9 +56,9 @@ pub fn read_ignored(
 
             let hash = match preproc.hash_img(&img) {
                 Ok(hash) => hash,
-                Err(PreprocError::Empty) => {
+                Err(e) => {
                     log::error!(
-                    "The ignored file '{}' is empty after border removal (mirror={mirrored})",
+                    "The ignored file '{}' is '{e}' empty after border removal (mirror={mirrored})",
                     file.display()
                 );
                     continue;
