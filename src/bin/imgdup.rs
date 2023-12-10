@@ -41,8 +41,6 @@ use rayon::prelude::*;
 /// Finds duplicate videos
 /// This uses rayon, so the `RAYON_NUM_THREADS` environment variable might be of interest.
 struct Cli {
-    // TODO: is the hassle of these flattened args worth it? Will i ever want to change
-    // them this frequently from the default?
     #[command(flatten)]
     simi_args: SimiCli,
 
@@ -322,7 +320,12 @@ mod video {
                         hashes.push((ts, hash, Mirror::Mirrored));
                     }
                 }
-                err if ctx.repo_grave.is_some() => {
+                err @ F::Ignored
+                | err @ F::Empty
+                | err @ F::TooBlack
+                | err @ F::TooBland
+                    if ctx.repo_grave.is_some() =>
+                {
                     let entry =
                         graveyard_entry.get_or_try_init(|| -> eyre::Result<_> {
                             let mut entry =
@@ -336,7 +339,11 @@ mod video {
                         &frame,
                     )?;
                 }
-                _ => (),
+                F::TooBlack
+                | F::TooBland
+                | F::TooSimilarToPrevious
+                | F::Ignored
+                | F::Empty => (),
             }
 
             extractor.seek_forward(step).wrap_err("Failed to seek")?;
