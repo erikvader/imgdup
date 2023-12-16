@@ -1,9 +1,13 @@
 default:
     @just --list --justfile '{{justfile()}}'
 
-version := "6.0.1"
-source := "source"
-install := "install"
+ffversion := "6.0.1"
+source_dir := "source"
+install_dir := "install"
+prefix_dir := justfile_directory() / install_dir
+
+rpath_dir := prefix_dir / "lib"
+rpath := "true"
 
 # Flags copied from https://gitlab.archlinux.org/archlinux/packaging/packages/ffmpeg/-/blob/2-6.0-13/PKGBUILD?ref_type=tags
 # Removed:
@@ -73,17 +77,18 @@ arch_flags := """
 all: clean clone configure build
 
 clone:
-    git clone --depth 1 --branch n{{version}} https://git.ffmpeg.org/ffmpeg.git {{source}}
+    git clone --depth 1 --branch n{{ffversion}} https://git.ffmpeg.org/ffmpeg.git {{source_dir}}
 
 configure:
-    cd {{source}} && ./configure \
-      --prefix={{justfile_directory() / install}} \
+    cd {{source_dir}} && ./configure \
+      --prefix={{prefix_dir}} \
       --disable-programs \
       --disable-doc \
+      {{ if rpath == "true" {"--extra-ldflags=-Wl,-rpath," + rpath_dir} else {""} }} \
       {{arch_flags}}
 
 build:
-    cd {{source}} && make -j {{num_cpus()}} install
+    cd {{source_dir}} && make -j {{num_cpus()}} install_dir
 
 clean:
-    rm -vrf {{install}} {{source}}
+    rm -vrf {{install_dir}} {{source_dir}}

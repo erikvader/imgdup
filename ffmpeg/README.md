@@ -38,11 +38,30 @@ CARGO_FEATURE_BUILD = "yes"
 
 ## Compile and link dynamically
 Another option is to compile FFmpeg normally and install it locally in
-this repo (or somewhere else). There is a
-[justfile](https://github.com/casey/just) prepared to do just that,
-invoke as `just all`. Then, add the lib path as an
+this repo (or somewhere else) and point to it somehow when executing
+the binary. There is a [justfile](https://github.com/casey/just)
+prepared to build ffmpeg locally, invoke as `just all`.
+
+### Wrapper script
+One option is to create a wrapper script that sets `LD_LIBRARY_PATH`
+to the `lib` dir.
+
+```sh
+export LD_LIBRARY_PATH=asd/lib
+exec imgdup "$@"
+```
+
+### rpath
+Another options is to embed the library path in the executable as an
 [rpath](https://aimlesslygoingforward.com/blog/2014/01/19/bundling-shared-libraries-on-linux/)
-on the executable so it can find the shared objects:
+(or actually
+[runpath](https://amir.rachum.com/shared-libraries/#rpath-and-runpath)).
+This is maybe [discouraged](https://wiki.debian.org/RpathIssue) as
+only executables and shared libraries that actually has this value set
+will be able to find the FFmpeg files. Thus, FFmpeg itself also needs
+the rpath set, which the justfile adds by default.
+
+To add it on the rust executable so it can find the shared objects:
 
 ```toml
 [build]
@@ -52,4 +71,5 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,/home/erik/Documents/imgdup/ffmpeg/insta
 Double check that it worked by running `readelf -d imgdup`, there
 should be a line with: `Library runpath:
 [/home/erik/Documents/imgdup/ffmpeg/install/lib]`. Then check that
-`ldd imgdup` points to the correct files.
+`ldd imgdup` points to the correct files, in case it doesn't, it's
+possible to debug with `LD_DEBUG=libs imgdup --help`
