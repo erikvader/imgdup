@@ -13,6 +13,7 @@ pub const BLACK: u8 = u8::MIN;
 args! {
     #[derive(Copy, Clone)]
     RemoveBorders {
+        // TODO: extract this to its own args!
         "All gray values below this becomes black"
         maskify_threshold: u8 = 40;
 

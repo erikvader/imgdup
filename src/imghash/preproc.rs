@@ -1,6 +1,7 @@
 use clap::Args;
 use image::RgbImage;
 
+use crate::utils::args_helper::args;
 use crate::utils::imgutils::{
     self, BlackMaskArgs, BlackMaskCli, BlandnessArgs, BlandnessCli, RemoveBordersCli,
 };
@@ -9,38 +10,11 @@ use crate::{
     utils::imgutils::RemoveBordersArgs,
 };
 
-// TODO: add support for this in the args helper
-#[derive(Args, Debug)]
-pub struct PreprocCli {
-    #[command(flatten)]
-    border_args: RemoveBordersCli,
-
-    #[command(flatten)]
-    black_args: BlackMaskCli,
-
-    #[command(flatten)]
-    bland_args: BlandnessCli,
-}
-
-impl PreprocCli {
-    pub fn to_args(&self) -> PreprocArgs {
-        PreprocArgs::default().remove_borders_args(self.border_args.to_args())
-    }
-}
-
-pub struct PreprocArgs {
-    border_args: RemoveBordersArgs,
-    black_args: BlackMaskArgs,
-    bland_args: BlandnessArgs,
-}
-
-impl Default for PreprocArgs {
-    fn default() -> Self {
-        Self {
-            border_args: RemoveBordersArgs::default(),
-            black_args: BlackMaskArgs::default(),
-            bland_args: BlandnessArgs::default(),
-        }
+args! {
+    Preproc {
+        border_args: RemoveBorders;
+        black_mask_args: BlackMask;
+        bland_args: Blandness;
     }
 }
 
@@ -55,21 +29,6 @@ pub enum PreprocError {
 }
 
 impl PreprocArgs {
-    pub fn remove_borders_args(mut self, args: RemoveBordersArgs) -> Self {
-        self.border_args = args;
-        self
-    }
-
-    pub fn black_mask_args(mut self, args: BlackMaskArgs) -> Self {
-        self.black_args = args;
-        self
-    }
-
-    pub fn bland_args(mut self, args: BlandnessArgs) -> Self {
-        self.bland_args = args;
-        self
-    }
-
     /// Preprocesses the image and hashes it, unless it is deemed a bad picture
     pub fn hash_img(&self, img: &RgbImage) -> Result<Hamming, PreprocError> {
         if self.bland_args.is_bland(img) {
@@ -77,7 +36,7 @@ impl PreprocArgs {
         }
 
         let mask = self.border_args.maskify(img);
-        if self.black_args.is_too_black(&mask) {
+        if self.black_mask_args.is_too_black(&mask) {
             return Err(PreprocError::TooBlack);
         }
 

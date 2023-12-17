@@ -1,19 +1,28 @@
 macro_rules! args {
-    ($(#$argsmeta:tt)* $name:ident { $($fhelp:literal $fname:ident: $ftype:ty = $fdefault:expr);+ $(;)* }) => {
+    ($(#$argsmeta:tt)* $name:ident { $($fhelp:literal $fname:ident: $ftype:ty = $fdefault:expr;)* $($mname:ident: $mtype:ty;)* }) => {
         paste::paste! {
             #[derive(clap::Args, Debug)]
             pub struct [<$name Cli>] {
                 $(
                     #[arg(long, default_value_t = ($fdefault), help = $fhelp)]
                     $fname: $ftype,
-                )+
+                )*
+
+                $(
+                    #[command(flatten)]
+                    $mname: [<$mtype Cli>],
+                )*
             }
 
             $(#$argsmeta)*
             pub struct [<$name Args>] {
                 $(
                     $fname: $ftype,
-                )+
+                )*
+
+                $(
+                    $mname: [<$mtype Args>],
+                )*
             }
 
             impl std::default::Default for [<$name Args>] {
@@ -21,7 +30,11 @@ macro_rules! args {
                     Self {
                         $(
                             $fname: $fdefault,
-                        )+
+                        )*
+
+                        $(
+                            $mname: [<$mtype Args>]::default(),
+                        )*
                     }
                 }
             }
@@ -32,7 +45,14 @@ macro_rules! args {
                         self.$fname = $fname;
                         self
                     }
-                )+
+                )*
+
+                $(
+                    pub fn $mname(mut self, $mname: [<$mtype Args>]) -> Self {
+                        self.$mname = $mname;
+                        self
+                    }
+                )*
             }
 
             impl [<$name Cli>] {
@@ -40,7 +60,11 @@ macro_rules! args {
                     [<$name Args>] {
                         $(
                             $fname: self.$fname.clone(),
-                        )+
+                        )*
+
+                        $(
+                            $mname: self.$mname.to_args(),
+                        )*
                     }
                 }
             }
