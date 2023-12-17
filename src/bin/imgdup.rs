@@ -11,29 +11,30 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use common::Payload;
 use image::RgbImage;
-use imgdup::utils::{
-    simple_path::SimplePath,
-    work_queue::WorkQueue,
-    workers::{scoped_workers, FinishedWorker},
-};
-use imgdup::{bin_common::ignored_hashes::read_ignored, imghash::preproc::PreprocArgs};
-use imgdup::{bin_common::ignored_hashes::Ignored, imghash::similarity::SimiArgs};
 use imgdup::{
-    bin_common::init::{init_eyre, init_logger},
+    bin_common::{
+        args::{
+            preproc::{PreprocArgs, PreprocCli, PreprocError},
+            similarity::{SimiArgs, SimiCli},
+        },
+        ignored_hashes::{read_ignored, Ignored},
+        init::{init_eyre, init_logger},
+    },
     bktree::{
         mmap::bktree::BKTree,
         source_types::video_source::{Mirror, VidSrc},
     },
     frame_extractor::{frame_extractor::FrameExtractor, timestamp::Timestamp},
-    imghash::{hamming::Hamming, preproc::PreprocCli, similarity::SimiCli},
-    utils::repo::{LazyEntry, Repo},
+    imghash::hamming::Hamming,
     utils::{
-        fsutils::{all_files, read_optional_file},
-        simple_path::clap_simple_relative_parser,
+        fsutils::{self, all_files, read_optional_file},
+        imgutils,
+        repo::{LazyEntry, Repo},
+        simple_path::{clap_simple_relative_parser, SimplePath, SimplePathBuf},
+        work_queue::WorkQueue,
+        workers::{scoped_workers, FinishedWorker},
     },
-    utils::{imgutils, simple_path::SimplePathBuf},
 };
-use imgdup::{imghash::preproc::PreprocError, utils::fsutils};
 use rayon::prelude::*;
 
 #[derive(Parser, Debug)]

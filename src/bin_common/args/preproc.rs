@@ -1,14 +1,16 @@
-use clap::Args;
 use image::RgbImage;
 
-use crate::utils::args_helper::args;
-use crate::utils::imgutils::{
-    self, BlackMaskArgs, BlackMaskCli, BlandnessArgs, BlandnessCli, RemoveBordersCli,
-};
 use crate::{
+    bin_common::args::{
+        black_mask::{BlackMaskArgs, BlackMaskCli},
+        blandness::{BlandnessArgs, BlandnessCli},
+        remove_borders::{RemoveBordersArgs, RemoveBordersCli},
+    },
     imghash::{hamming::Hamming, imghash},
-    utils::imgutils::RemoveBordersArgs,
+    utils::imgutils,
 };
+
+use super::args_helper::args;
 
 args! {
     Preproc {

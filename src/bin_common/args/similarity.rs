@@ -1,7 +1,6 @@
-use crate::{
-    imghash::hamming::{Distance, Hamming},
-    utils::args_helper::args,
-};
+use crate::imghash::hamming::{Distance, Hamming};
+
+use super::args_helper::args;
 
 args! {
     #[derive(Copy, Clone)]

@@ -1,96 +1,13 @@
-use image::imageops::{self, crop_imm, flip_horizontal_in_place, FilterType};
+use image::imageops::{self, flip_horizontal_in_place, FilterType};
 use image::math::Rect;
 use image::{GenericImageView, GrayImage, ImageBuffer, Pixel, Rgb, RgbImage, SubImage};
 
 pub use image::imageops::colorops::grayscale;
 
-use super::args_helper::args;
 use super::math::{Average, Variance};
 
 pub const WHITE: u8 = u8::MAX;
 pub const BLACK: u8 = u8::MIN;
-
-args! {
-    #[derive(Copy, Clone)]
-    RemoveBorders {
-        // TODO: extract this to its own args!
-        "All gray values below this becomes black"
-        maskify_threshold: u8 = 40;
-
-        "A mask line can contain this many percent of white and still be considered black"
-        maximum_whites: f64 = 0.1;
-    }
-}
-
-impl RemoveBordersArgs {
-    pub fn remove_borders<'a>(self, img: &'a RgbImage) -> SubImage<&'a RgbImage> {
-        let mask = self.maskify(img);
-        self.remove_borders_mask(img, &mask)
-    }
-
-    pub fn remove_borders_mask<'a>(
-        self,
-        img: &'a RgbImage,
-        mask: &GrayImage,
-    ) -> SubImage<&'a RgbImage> {
-        let bbox = watermark_getbbox(&mask, self.maximum_whites);
-        crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
-    }
-
-    pub fn maskify(self, img: &RgbImage) -> GrayImage {
-        maskify(img, self.maskify_threshold)
-    }
-}
-
-args! {
-    #[derive(Copy, Clone)]
-    Blandness {
-        "Images with blandess less than or equal to this are filetered out (negative to disable)"
-        blandness_threshold: f64 = -1.0;
-    }
-}
-
-impl BlandnessArgs {
-    pub fn blandness<I>(self, img: &I) -> f64
-    where
-        I: GenericImageView<Pixel = Rgb<u8>>,
-    {
-        color_variance(img)
-    }
-
-    pub fn is_value_bland(self, blandness: f64) -> bool {
-        blandness <= self.blandness_threshold
-    }
-
-    pub fn is_bland<I>(self, img: &I) -> bool
-    where
-        I: GenericImageView<Pixel = Rgb<u8>>,
-    {
-        self.blandness_threshold >= 0.0 && self.is_value_bland(self.blandness(img))
-    }
-}
-
-args! {
-    #[derive(Copy, Clone)]
-    BlackMask {
-        "Masks that are at least this many percent black are filtered out (negative to disable)"
-        black_mask_threshold: f64 = 90.0;
-    }
-}
-
-impl BlackMaskArgs {
-    pub fn blackness(self, mask: &GrayImage) -> f64 {
-        mask_blackness(mask)
-    }
-
-    pub fn is_value_too_black(self, blackness: f64) -> bool {
-        blackness >= self.black_mask_threshold
-    }
-
-    pub fn is_too_black(self, mask: &GrayImage) -> bool {
-        self.black_mask_threshold >= 0.0 && self.is_value_too_black(self.blackness(mask))
-    }
-}
 
 pub fn resize_keep_aspect_ratio<I: GenericImageView>(
     image: &I,
@@ -270,6 +187,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use image::imageops::crop_imm;
+
     use super::*;
 
     #[test]
@@ -300,7 +219,7 @@ mod test {
             bbox
         );
 
-        let cropped = RemoveBordersArgs::default().remove_borders(&black);
+        let cropped = crop_imm(&black, bbox.x, bbox.y, bbox.width, bbox.height);
         assert!(is_img_empty(&*cropped));
         assert!(is_subimg_empty(&cropped));
     }

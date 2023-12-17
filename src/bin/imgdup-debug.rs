@@ -7,14 +7,16 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup::{
-    bin_common::init::{init_eyre, init_logger},
+    bin_common::{
+        args::{
+            preproc::{PreprocArgs, PreprocCli},
+            similarity::{SimiArgs, SimiCli},
+        },
+        init::{init_eyre, init_logger},
+    },
     bktree::{mmap::bktree::BKTree, source_types::video_source::VidSrc},
     frame_extractor::frame_extractor::FrameExtractor,
-    imghash::{
-        hamming::Hamming,
-        preproc::{PreprocArgs, PreprocCli},
-        similarity::{SimiArgs, SimiCli},
-    },
+    imghash::hamming::Hamming,
     utils::{
         repo::{Entry, Repo},
         simple_path::{SimplePath, SimplePathBuf},
@@ -244,7 +246,9 @@ fn read_images_from_videos(
                                 .seek_to(vidsrc2.frame_pos())
                                 .wrap_err("failed to seek")?;
 
-                            let Some((_, img)) = extractor.next().wrap_err("failed to get frame")? else {
+                            let Some((_, img)) =
+                                extractor.next().wrap_err("failed to get frame")?
+                            else {
                                 eyre::bail!("should have returned an image");
                             };
 

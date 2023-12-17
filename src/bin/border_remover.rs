@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use image::{DynamicImage, GenericImageView};
-use imgdup::utils::imgutils::RemoveBordersCli;
+use imgdup::bin_common::args::remove_borders::RemoveBordersCli;
 
 #[derive(Parser)]
 #[command()]

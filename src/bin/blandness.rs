@@ -2,9 +2,12 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use imgdup::{
-    bin_common::init::init_eyre,
-    utils::imgutils::{BlackMaskCli, BlandnessCli, RemoveBordersCli},
+use imgdup::bin_common::{
+    args::{
+        black_mask::BlackMaskCli, blandness::BlandnessCli,
+        remove_borders::RemoveBordersCli,
+    },
+    init::init_eyre,
 };
 
 #[derive(Parser)]

@@ -7,6 +7,10 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup::{
+    bin_common::args::{
+        preproc::{PreprocArgs, PreprocCli},
+        similarity::{SimiArgs, SimiCli},
+    },
     bin_common::{
         ignored_hashes::read_ignored,
         init::{init_eyre, init_logger},
@@ -14,10 +18,6 @@ use imgdup::{
     bktree::{
         mmap::bktree::BKTree,
         source_types::{any_source::AnySource, video_source::VidSrc},
-    },
-    imghash::{
-        preproc::{PreprocArgs, PreprocCli},
-        similarity::{SimiArgs, SimiCli},
     },
 };
 

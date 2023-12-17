@@ -2,13 +2,12 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, Context};
 
-use crate::imghash::{
-    hamming::Hamming,
-    preproc::{PreprocArgs, PreprocError},
-    similarity::SimiArgs,
-};
+use crate::imghash::hamming::Hamming;
 use crate::utils::fsutils::all_files;
 use crate::utils::imgutils;
+
+use super::args::preproc::PreprocArgs;
+use super::args::similarity::SimiArgs;
 
 pub struct Ignored {
     hashes: Vec<Hamming>,

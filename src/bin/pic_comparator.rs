@@ -8,13 +8,16 @@ use std::{
 
 use clap::Parser;
 use imgdup::{
+    bin_common::args::remove_borders::{RemoveBordersArgs, RemoveBordersCli},
     imghash::{
         hamming::{Distance, Hamming},
         imghash,
     },
-    utils::fsutils::{all_files, clear_dir, path_as_filename, symlink},
-    utils::imgutils::{self, RemoveBordersArgs, RemoveBordersCli},
-    utils::plot,
+    utils::{
+        fsutils::{all_files, clear_dir, path_as_filename, symlink},
+        imgutils::{self},
+        plot,
+    },
 };
 
 #[derive(Parser)]
