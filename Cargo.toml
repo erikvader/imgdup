@@ -38,6 +38,7 @@ image = "0.24"
 clap = { version = "4.3", features = ["derive"] }
 humantime = "2.1"
 rand = {version = "0.8", features = ["small_rng"]}
+paste = "1.0"
 
 # For file_array
 rkyv = {version="0.7", features=["validation", "size_64", "std"], default_features=false}

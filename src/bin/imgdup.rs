@@ -38,7 +38,8 @@ use rayon::prelude::*;
 
 #[derive(Parser, Debug)]
 #[command()]
-/// Finds duplicate videos
+/// Finds duplicate videos.
+///
 /// This uses rayon, so the `RAYON_NUM_THREADS` environment variable might be of interest.
 struct Cli {
     #[command(flatten)]

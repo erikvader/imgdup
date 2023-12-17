@@ -47,7 +47,7 @@ One option is to create a wrapper script that sets `LD_LIBRARY_PATH`
 to the `lib` dir.
 
 ```sh
-export LD_LIBRARY_PATH=asd/lib
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:asd/lib
 exec imgdup "$@"
 ```
 

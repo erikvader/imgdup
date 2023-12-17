@@ -1,40 +1,17 @@
-use clap::Args;
+use crate::{
+    imghash::hamming::{Distance, Hamming},
+    utils::args_helper::args,
+};
 
-use crate::imghash::hamming::{Distance, Hamming};
-
-pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 23;
-
-#[derive(Args, Debug)]
-pub struct SimiCli {
-    /// Maximum distance for two images to be considered equal
-    #[arg(long, default_value_t = DEFAULT_SIMILARITY_THRESHOLD)]
-    similarity_threshold: Distance,
-}
-
-impl SimiCli {
-    pub fn to_args(&self) -> SimiArgs {
-        SimiArgs::default().similarity_threshold(self.similarity_threshold)
-    }
-}
-
-pub struct SimiArgs {
-    similarity_threshold: Distance,
-}
-
-impl Default for SimiArgs {
-    fn default() -> Self {
-        Self {
-            similarity_threshold: DEFAULT_SIMILARITY_THRESHOLD,
-        }
+args! {
+    #[derive(Copy, Clone)]
+    Simi {
+        "Maximum distance for two images to be considered equal"
+        similarity_threshold: Distance = 23;
     }
 }
 
 impl SimiArgs {
-    pub fn similarity_threshold(mut self, threshold: Distance) -> Self {
-        self.similarity_threshold = threshold;
-        self
-    }
-
     pub fn threshold(&self) -> Distance {
         self.similarity_threshold
     }

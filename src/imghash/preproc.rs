@@ -5,15 +5,11 @@ use crate::utils::imgutils::{
     self, BlackMaskArgs, BlackMaskCli, BlandnessArgs, BlandnessCli, RemoveBordersCli,
 };
 use crate::{
-    imghash::{
-        hamming::{Distance, Hamming},
-        imghash,
-    },
+    imghash::{hamming::Hamming, imghash},
     utils::imgutils::RemoveBordersArgs,
 };
 
-pub const DEFAULT_SIMILARITY_THRESHOLD: Distance = 23;
-
+// TODO: add support for this in the args helper
 #[derive(Args, Debug)]
 pub struct PreprocCli {
     #[command(flatten)]

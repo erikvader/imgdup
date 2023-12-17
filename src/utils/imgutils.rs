@@ -1,58 +1,27 @@
-use clap::Args;
 use image::imageops::{self, crop_imm, flip_horizontal_in_place, FilterType};
 use image::math::Rect;
 use image::{GenericImageView, GrayImage, ImageBuffer, Pixel, Rgb, RgbImage, SubImage};
 
 pub use image::imageops::colorops::grayscale;
 
+use super::args_helper::args;
 use super::math::{Average, Variance};
 
 pub const WHITE: u8 = u8::MAX;
 pub const BLACK: u8 = u8::MIN;
 
-pub const DEFAULT_MASKIFY_THRESHOLD: u8 = 40;
-pub const DEFAULT_BORDER_MAX_WHITES: f64 = 0.1;
+args! {
+    #[derive(Copy, Clone)]
+    RemoveBorders {
+        "All gray values below this becomes black"
+        maskify_threshold: u8 = 40;
 
-#[derive(Args, Debug)]
-pub struct RemoveBordersCli {
-    /// All gray values below this becomes black
-    #[arg(long, default_value_t = DEFAULT_MASKIFY_THRESHOLD)]
-    maskify_threshold: u8,
-
-    /// A mask line can contain this many percent of white and still be considered black
-    #[arg(long, default_value_t = DEFAULT_BORDER_MAX_WHITES)]
-    maximum_whites: f64,
-}
-
-#[derive(Copy, Clone)]
-pub struct RemoveBordersArgs {
-    // TODO: extract maskify stuff to its own struct? Should create a macro or something
-    // to reduce boilerplate first, and organize it in several files. Both removeborders
-    // and maskblackness needs a mask.
-    maskify_threshold: u8,
-    maximum_whites: f64,
-}
-
-impl Default for RemoveBordersArgs {
-    fn default() -> Self {
-        Self {
-            maskify_threshold: DEFAULT_MASKIFY_THRESHOLD,
-            maximum_whites: DEFAULT_BORDER_MAX_WHITES,
-        }
+        "A mask line can contain this many percent of white and still be considered black"
+        maximum_whites: f64 = 0.1;
     }
 }
 
 impl RemoveBordersArgs {
-    pub fn maskify_threshold(mut self, threshold: u8) -> Self {
-        self.maskify_threshold = threshold;
-        self
-    }
-
-    pub fn maximum_whites(mut self, max: f64) -> Self {
-        self.maximum_whites = max;
-        self
-    }
-
     pub fn remove_borders<'a>(self, img: &'a RgbImage) -> SubImage<&'a RgbImage> {
         let mask = self.maskify(img);
         self.remove_borders_mask(img, &mask)
@@ -72,43 +41,15 @@ impl RemoveBordersArgs {
     }
 }
 
-impl RemoveBordersCli {
-    pub fn to_args(&self) -> RemoveBordersArgs {
-        RemoveBordersArgs::default()
-            .maskify_threshold(self.maskify_threshold)
-            .maximum_whites(self.maximum_whites)
-    }
-}
-
-pub const DEFAULT_BLANDNESS_THRESHOLD: f64 = -1.0;
-
-#[derive(Args, Debug)]
-pub struct BlandnessCli {
-    /// Images with blandess less than or equal to this are filtered out (negative to
-    /// disable)
-    #[arg(long, default_value_t = DEFAULT_BLANDNESS_THRESHOLD)]
-    blandness_threshold: f64,
-}
-
-#[derive(Copy, Clone)]
-pub struct BlandnessArgs {
-    bland_threshold: f64,
-}
-
-impl Default for BlandnessArgs {
-    fn default() -> Self {
-        Self {
-            bland_threshold: DEFAULT_BLANDNESS_THRESHOLD,
-        }
+args! {
+    #[derive(Copy, Clone)]
+    Blandness {
+        "Images with blandess less than or equal to this are filetered out (negative to disable)"
+        blandness_threshold: f64 = -1.0;
     }
 }
 
 impl BlandnessArgs {
-    pub fn blandness_threshold(mut self, threshold: f64) -> Self {
-        self.bland_threshold = threshold;
-        self
-    }
-
     pub fn blandness<I>(self, img: &I) -> f64
     where
         I: GenericImageView<Pixel = Rgb<u8>>,
@@ -117,52 +58,26 @@ impl BlandnessArgs {
     }
 
     pub fn is_value_bland(self, blandness: f64) -> bool {
-        blandness <= self.bland_threshold
+        blandness <= self.blandness_threshold
     }
 
     pub fn is_bland<I>(self, img: &I) -> bool
     where
         I: GenericImageView<Pixel = Rgb<u8>>,
     {
-        self.bland_threshold >= 0.0 && self.is_value_bland(self.blandness(img))
+        self.blandness_threshold >= 0.0 && self.is_value_bland(self.blandness(img))
     }
 }
 
-impl BlandnessCli {
-    pub fn to_args(&self) -> BlandnessArgs {
-        BlandnessArgs::default().blandness_threshold(self.blandness_threshold)
-    }
-}
-
-pub const DEFAULT_BLACK_MASK_THRESHOLD: f64 = 90.0;
-
-#[derive(Args, Debug)]
-pub struct BlackMaskCli {
-    /// Masks that are at least this many percent black are filtered out (negative to
-    /// disable)
-    #[arg(long, default_value_t = DEFAULT_BLACK_MASK_THRESHOLD)]
-    black_mask_threshold: f64,
-}
-
-#[derive(Copy, Clone)]
-pub struct BlackMaskArgs {
-    black_mask_threshold: f64,
-}
-
-impl Default for BlackMaskArgs {
-    fn default() -> Self {
-        Self {
-            black_mask_threshold: DEFAULT_BLACK_MASK_THRESHOLD,
-        }
+args! {
+    #[derive(Copy, Clone)]
+    BlackMask {
+        "Masks that are at least this many percent black are filtered out (negative to disable)"
+        black_mask_threshold: f64 = 90.0;
     }
 }
 
 impl BlackMaskArgs {
-    pub fn black_mask_threshold(mut self, threshold: f64) -> Self {
-        self.black_mask_threshold = threshold;
-        self
-    }
-
     pub fn blackness(self, mask: &GrayImage) -> f64 {
         mask_blackness(mask)
     }
@@ -173,12 +88,6 @@ impl BlackMaskArgs {
 
     pub fn is_too_black(self, mask: &GrayImage) -> bool {
         self.black_mask_threshold >= 0.0 && self.is_value_too_black(self.blackness(mask))
-    }
-}
-
-impl BlackMaskCli {
-    pub fn to_args(&self) -> BlackMaskArgs {
-        BlackMaskArgs::default().black_mask_threshold(self.black_mask_threshold)
     }
 }
 
