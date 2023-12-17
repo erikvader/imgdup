@@ -1,4 +1,4 @@
-use std::{fmt, path::Path};
+use std::{fmt};
 
 use rkyv::{Archive, Serialize};
 

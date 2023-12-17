@@ -310,6 +310,7 @@ impl FileArray {
         Ok(())
     }
 
+    #[allow(dead_code)] // NOTE: will maybe be used one day
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         self.reserve_internal(additional, self.mmap.len())
     }

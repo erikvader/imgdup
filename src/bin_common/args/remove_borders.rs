@@ -1,7 +1,7 @@
 use crate::utils::imgutils::{maskify, watermark_getbbox};
 
 use super::args_helper::args;
-use image::{imageops::crop_imm, GenericImageView, GrayImage, RgbImage, SubImage};
+use image::{imageops::crop_imm, GrayImage, RgbImage, SubImage};
 
 pub use image::imageops::colorops::grayscale;
 

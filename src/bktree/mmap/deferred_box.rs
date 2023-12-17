@@ -10,7 +10,7 @@ use rkyv::{
     },
     validation::validators::DefaultValidator,
     vec::ArchivedVec,
-    AlignedVec, Archive, CheckBytes, Deserialize, Serialize,
+    AlignedVec, Archive, CheckBytes, Serialize,
 };
 
 pub type DeferredBoxSerializer = CompositeSerializer<
@@ -68,6 +68,7 @@ impl ArchivedDeferredBox {
             .map_err(|e| Error::Validate(format!("{e}")))
     }
 
+    #[allow(dead_code)] // NOTE: will maybe be used one day
     pub fn get_mut<'a, T>(self: Pin<&'a mut Self>) -> Result<Pin<&'a mut T::Archived>>
     where
         T: Archive,

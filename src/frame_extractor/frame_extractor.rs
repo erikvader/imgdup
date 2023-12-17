@@ -1,6 +1,6 @@
 extern crate ffmpeg_next as ffmpeg;
 
-use std::borrow::Cow;
+
 use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
