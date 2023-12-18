@@ -3,10 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup::bin_common::{
-    args::{
-        black_mask::BlackMaskCli, blandness::BlandnessCli,
-        remove_borders::RemoveBordersCli,
-    },
+    args::{blandness::BlandnessCli, one_color::OneColorCli},
     init::init_eyre,
 };
 
@@ -18,10 +15,7 @@ struct Cli {
     bland_args: BlandnessCli,
 
     #[command(flatten)]
-    black_args: BlackMaskCli,
-
-    #[command(flatten)]
-    border_args: RemoveBordersCli,
+    one_color_args: OneColorCli,
 
     /// The image file to use
     inputs: Vec<PathBuf>,
@@ -32,8 +26,7 @@ fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
 
     let bland_args = cli.bland_args.to_args();
-    let black_args = cli.black_args.to_args();
-    let border_args = cli.border_args.to_args();
+    let one_color_args = cli.one_color_args.to_args();
 
     for input in cli.inputs {
         let pic = image::open(&input)
@@ -43,12 +36,13 @@ fn main() -> eyre::Result<()> {
         let blandness = bland_args.blandness(&pic);
         let is_bland = bland_args.is_value_bland(blandness);
 
-        let mask = border_args.maskify(&pic);
-        let blackness = black_args.blackness(&mask);
-        let is_black = black_args.is_value_too_black(blackness);
+        let one_color = one_color_args.one_color(&pic);
+        let is_one_color = one_color_args.is_value_too_one_color(one_color);
 
         let input = input.display();
-        println!("{input}: Bland={blandness}({is_bland}), Black={blackness}({is_black})");
+        println!(
+            "{input}: Bland={blandness}({is_bland}), one={one_color}({is_one_color})"
+        );
     }
 
     Ok(())

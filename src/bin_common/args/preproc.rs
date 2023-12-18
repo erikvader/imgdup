@@ -1,9 +1,9 @@
-use image::RgbImage;
+use image::{imageops::grayscale, RgbImage};
 
 use crate::{
     bin_common::args::{
-        black_mask::{BlackMaskArgs, BlackMaskCli},
         blandness::{BlandnessArgs, BlandnessCli},
+        one_color::{OneColorArgs, OneColorCli},
         remove_borders::{RemoveBordersArgs, RemoveBordersCli},
     },
     imghash::{hamming::Hamming, imghash},
@@ -15,7 +15,7 @@ use super::args_helper::args;
 args! {
     Preproc {
         border_args: RemoveBorders;
-        black_mask_args: BlackMask;
+        one_color_args: OneColor;
         bland_args: Blandness;
     }
 }
@@ -24,8 +24,8 @@ args! {
 pub enum PreprocError {
     #[error("image became empty")]
     Empty,
-    #[error("the image consists of too many black pixels")]
-    TooBlack,
+    #[error("the image consists of too many pixels of the same color")]
+    TooOneColor,
     #[error("the image is too bland")]
     TooBland,
 }
@@ -37,11 +37,13 @@ impl PreprocArgs {
             return Err(PreprocError::TooBland);
         }
 
-        let mask = self.border_args.maskify(img);
-        if self.black_mask_args.is_too_black(&mask) {
-            return Err(PreprocError::TooBlack);
+        let gray = grayscale(img);
+        let one_color = self.one_color_args.one_color_gray(&gray);
+        if self.one_color_args.is_value_too_one_color(one_color) {
+            return Err(PreprocError::TooOneColor);
         }
 
+        let mask = self.border_args.maskify(gray);
         let no_borders = self.border_args.remove_borders_mask(img, &mask);
 
         if imgutils::is_subimg_empty(&no_borders) {

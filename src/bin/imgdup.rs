@@ -324,7 +324,7 @@ mod video {
                 }
                 err @ F::Ignored
                 | err @ F::Empty
-                | err @ F::TooBlack
+                | err @ F::TooOneColor
                 | err @ F::TooBland
                     if ctx.repo_grave.is_some() =>
                 {
@@ -341,7 +341,7 @@ mod video {
                         &frame,
                     )?;
                 }
-                F::TooBlack
+                F::TooOneColor
                 | F::TooBland
                 | F::TooSimilarToPrevious
                 | F::Ignored
@@ -357,7 +357,7 @@ mod video {
 
     enum FrameToHashResult {
         Empty,
-        TooBlack,
+        TooOneColor,
         TooBland,
         Ignored,
         TooSimilarToPrevious,
@@ -368,7 +368,7 @@ mod video {
         fn name(&self) -> &'static str {
             match self {
                 FrameToHashResult::Empty => "empty",
-                FrameToHashResult::TooBlack => "too_black",
+                FrameToHashResult::TooOneColor => "too_one_color",
                 FrameToHashResult::TooBland => "too_bland",
                 FrameToHashResult::Ignored => "ignored",
                 FrameToHashResult::TooSimilarToPrevious => "similar_previous",
@@ -385,7 +385,7 @@ mod video {
         let hash = match ctx.preproc_args.hash_img(&frame) {
             Ok(hash) => hash,
             Err(PreprocError::Empty) => return FrameToHashResult::Empty,
-            Err(PreprocError::TooBlack) => return FrameToHashResult::TooBlack,
+            Err(PreprocError::TooOneColor) => return FrameToHashResult::TooOneColor,
             Err(PreprocError::TooBland) => return FrameToHashResult::TooBland,
         };
 

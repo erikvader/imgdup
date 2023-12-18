@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use image::{DynamicImage, GenericImageView};
+use image::{imageops::grayscale, DynamicImage, GenericImageView};
 use imgdup::bin_common::args::remove_borders::RemoveBordersCli;
 
 #[derive(Parser)]
@@ -36,7 +36,7 @@ fn main() -> eyre::Result<()> {
     println!("before:  {:?}", input.bounds());
 
     let output: DynamicImage = if cli.maskify {
-        border_args.maskify(&input).0.into()
+        border_args.maskify(grayscale(&input)).0.into()
     } else {
         let cropped = border_args.remove_borders(&input);
         println!("cropped: {:?}", cropped.bounds());

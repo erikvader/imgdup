@@ -1,6 +1,8 @@
 use image::imageops::{self, flip_horizontal_in_place, FilterType};
 use image::math::Rect;
-use image::{GenericImageView, GrayImage, ImageBuffer, Pixel, Rgb, RgbImage, SubImage};
+use image::{
+    GenericImageView, GrayImage, ImageBuffer, Luma, Pixel, Rgb, RgbImage, SubImage,
+};
 
 pub use image::imageops::colorops::grayscale;
 
@@ -61,12 +63,11 @@ pub fn construct_gray(raw: &[&[u8]]) -> GrayImage {
     })
 }
 
-pub fn maskify(img: &RgbImage, threshold: u8) -> Mask {
-    let mut mask = grayscale(img);
-    mask.pixels_mut().for_each(|p| {
+pub fn maskify(mut img: GrayImage, threshold: u8) -> Mask {
+    img.pixels_mut().for_each(|p| {
         p.apply(|bright| (bright <= threshold).then_some(BLACK).unwrap_or(WHITE))
     });
-    Mask(mask)
+    Mask(img)
 }
 
 pub fn mask_blackness(img: &Mask) -> f64 {
@@ -74,6 +75,19 @@ pub fn mask_blackness(img: &Mask) -> f64 {
     let black_count = img.pixels().filter(|p| p[0] == BLACK).count();
     let total = img.width() * img.height();
     100.0 * (black_count as f64) / (total as f64)
+}
+
+pub fn percent_gray<I>(img: &I, color: Luma<u8>, tolerance: u8) -> f64
+where
+    I: GenericImageView<Pixel = Luma<u8>>,
+{
+    let within_tolerance = img
+        .pixels()
+        .filter(|(_, _, luma)| luma[0].abs_diff(color[0]) <= tolerance)
+        .count();
+
+    let total = img.width() * img.height();
+    100.0 * (within_tolerance as f64) / (total as f64)
 }
 
 // TODO: use https://crates.io/crates/nalgebra or https://crates.io/crates/ndarray instead
@@ -143,6 +157,27 @@ pub fn mirror(mut img: RgbImage) -> RgbImage {
     img
 }
 
+pub fn most_common_gray<I>(img: &I) -> Luma<u8>
+where
+    I: GenericImageView<Pixel = Luma<u8>>,
+{
+    let u8_max: usize = u8::MAX.into();
+    let mut counts = vec![0; u8_max + 1];
+
+    img.pixels().for_each(|(_, _, luma)| {
+        let i: usize = luma[0].into();
+        counts[i] += 1;
+    });
+
+    counts
+        .into_iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.cmp(&b))
+        .map(|(i, _)| [i.try_into().expect("is less than 256")])
+        .expect("the vec is non-empty")
+        .into()
+}
+
 // https://sighack.com/post/averaging-rgb-colors-the-right-way
 pub fn average_color<I>(img: &I) -> Rgb<u8>
 where
@@ -208,7 +243,7 @@ mod test {
         let black = filled(100, 100, 0, 0, 0);
         assert!(black.pixels().all(|p| p[0] == BLACK));
 
-        let mask = maskify(&black, 0);
+        let mask = maskify(grayscale(&black), 0);
         assert!(mask.0.pixels().all(|p| p[0] == BLACK));
 
         let bbox = watermark_getbbox(&mask, 0.0);
