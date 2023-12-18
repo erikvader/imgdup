@@ -303,6 +303,8 @@ mod video {
         let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
         let approx_len = Timestamp::duration_to_string(approx_len);
 
+        // TODO: skip the first N seconds if the total length is long enough
+
         let mut last_logged = Instant::now();
         while let Some((ts, frame)) =
             extractor.next().wrap_err("Failed to get a frame")?
@@ -348,6 +350,7 @@ mod video {
                 | F::Empty => (),
             }
 
+            // TODO: add some randomness to the step?
             extractor.seek_forward(step).wrap_err("Failed to seek")?;
         }
 

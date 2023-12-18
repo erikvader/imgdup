@@ -7,7 +7,7 @@ use super::args_helper::args;
 args! {
     #[derive(Copy, Clone)]
     OneColor {
-        "Images that are at least this many percent of the same color (in grayscale) are filtered out (negative to disable)"
+        "Images that are at least this many percent of the same color (in grayscale) are filtered out (>100 to disable)"
         one_color_threshold: f64 = 90.0;
 
         "Tolerance when determining if two gray colors are the same."
@@ -34,7 +34,7 @@ impl OneColorArgs {
     }
 
     pub fn is_too_one_color_gray(self, img: &GrayImage) -> bool {
-        self.one_color_threshold >= 0.0
+        self.one_color_threshold <= 100.0
             && self.is_value_too_one_color(self.one_color_gray(img))
     }
 }

@@ -45,7 +45,6 @@ impl PreprocArgs {
 
         let mask = self.border_args.maskify(gray);
         let no_borders = self.border_args.remove_borders_mask(img, &mask);
-
         if imgutils::is_subimg_empty(&no_borders) {
             return Err(PreprocError::Empty);
         }

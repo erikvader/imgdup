@@ -33,6 +33,8 @@ impl Ignored {
     }
 }
 
+// TODO: support the images having an alpha channel. Only check the regions for similarity
+// where there is no transparency
 pub fn read_ignored(
     dir: impl AsRef<Path>,
     preproc: &PreprocArgs,

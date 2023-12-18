@@ -70,13 +70,7 @@ pub fn maskify(mut img: GrayImage, threshold: u8) -> Mask {
     Mask(img)
 }
 
-pub fn mask_blackness(img: &Mask) -> f64 {
-    let img = &img.0;
-    let black_count = img.pixels().filter(|p| p[0] == BLACK).count();
-    let total = img.width() * img.height();
-    100.0 * (black_count as f64) / (total as f64)
-}
-
+// TODO: test?
 pub fn percent_gray<I>(img: &I, color: Luma<u8>, tolerance: u8) -> f64
 where
     I: GenericImageView<Pixel = Luma<u8>>,
@@ -157,6 +151,7 @@ pub fn mirror(mut img: RgbImage) -> RgbImage {
     img
 }
 
+// TODO: test
 pub fn most_common_gray<I>(img: &I) -> Luma<u8>
 where
     I: GenericImageView<Pixel = Luma<u8>>,
