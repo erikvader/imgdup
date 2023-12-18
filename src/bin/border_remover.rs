@@ -36,7 +36,7 @@ fn main() -> eyre::Result<()> {
     println!("before:  {:?}", input.bounds());
 
     let output: DynamicImage = if cli.maskify {
-        border_args.maskify(&input).into()
+        border_args.maskify(&input).0.into()
     } else {
         let cropped = border_args.remove_borders(&input);
         println!("cropped: {:?}", cropped.bounds());

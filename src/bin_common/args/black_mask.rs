@@ -1,6 +1,4 @@
-use image::GrayImage;
-
-use crate::utils::imgutils::mask_blackness;
+use crate::utils::imgutils::{mask_blackness, Mask};
 
 use super::args_helper::args;
 
@@ -13,7 +11,7 @@ args! {
 }
 
 impl BlackMaskArgs {
-    pub fn blackness(self, mask: &GrayImage) -> f64 {
+    pub fn blackness(self, mask: &Mask) -> f64 {
         mask_blackness(mask)
     }
 
@@ -21,7 +19,7 @@ impl BlackMaskArgs {
         blackness >= self.black_mask_threshold
     }
 
-    pub fn is_too_black(self, mask: &GrayImage) -> bool {
+    pub fn is_too_black(self, mask: &Mask) -> bool {
         self.black_mask_threshold >= 0.0 && self.is_value_too_black(self.blackness(mask))
     }
 }

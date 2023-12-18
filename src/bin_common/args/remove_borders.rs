@@ -1,7 +1,7 @@
-use crate::utils::imgutils::{maskify, watermark_getbbox};
+use crate::utils::imgutils::{maskify, watermark_getbbox, Mask};
 
 use super::args_helper::args;
-use image::{imageops::crop_imm, GrayImage, RgbImage, SubImage};
+use image::{imageops::crop_imm, RgbImage, SubImage};
 
 pub use image::imageops::colorops::grayscale;
 
@@ -26,13 +26,13 @@ impl RemoveBordersArgs {
     pub fn remove_borders_mask<'a>(
         self,
         img: &'a RgbImage,
-        mask: &GrayImage,
+        mask: &Mask,
     ) -> SubImage<&'a RgbImage> {
         let bbox = watermark_getbbox(&mask, self.maximum_whites);
         crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
     }
 
-    pub fn maskify(self, img: &RgbImage) -> GrayImage {
+    pub fn maskify(self, img: &RgbImage) -> Mask {
         maskify(img, self.maskify_threshold)
     }
 }

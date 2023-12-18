@@ -8,6 +8,7 @@ use super::math::{Average, Variance};
 
 pub const WHITE: u8 = u8::MAX;
 pub const BLACK: u8 = u8::MIN;
+pub struct Mask(pub GrayImage);
 
 pub fn resize_keep_aspect_ratio<I: GenericImageView>(
     image: &I,
@@ -60,15 +61,16 @@ pub fn construct_gray(raw: &[&[u8]]) -> GrayImage {
     })
 }
 
-pub fn maskify(img: &RgbImage, threshold: u8) -> GrayImage {
+pub fn maskify(img: &RgbImage, threshold: u8) -> Mask {
     let mut mask = grayscale(img);
     mask.pixels_mut().for_each(|p| {
         p.apply(|bright| (bright <= threshold).then_some(BLACK).unwrap_or(WHITE))
     });
-    mask
+    Mask(mask)
 }
 
-pub fn mask_blackness(img: &GrayImage) -> f64 {
+pub fn mask_blackness(img: &Mask) -> f64 {
+    let img = &img.0;
     let black_count = img.pixels().filter(|p| p[0] == BLACK).count();
     let total = img.width() * img.height();
     100.0 * (black_count as f64) / (total as f64)
@@ -76,7 +78,8 @@ pub fn mask_blackness(img: &GrayImage) -> f64 {
 
 // TODO: use https://crates.io/crates/nalgebra or https://crates.io/crates/ndarray instead
 // of manually looping to speed things up?
-pub fn watermark_getbbox(mask: &GrayImage, maximum_whites: f64) -> Rect {
+pub fn watermark_getbbox(mask: &Mask, maximum_whites: f64) -> Rect {
+    let mask = &mask.0;
     let maximum_whites = maximum_whites.max(0.0);
 
     let mut columns = vec![0; mask.width() as usize];
@@ -206,7 +209,7 @@ mod test {
         assert!(black.pixels().all(|p| p[0] == BLACK));
 
         let mask = maskify(&black, 0);
-        assert!(mask.pixels().all(|p| p[0] == BLACK));
+        assert!(mask.0.pixels().all(|p| p[0] == BLACK));
 
         let bbox = watermark_getbbox(&mask, 0.0);
         assert_eq!(
@@ -226,7 +229,7 @@ mod test {
 
     #[test]
     fn bbox_white() {
-        let img = construct_gray(&[&[WHITE, WHITE, WHITE]]);
+        let img = Mask(construct_gray(&[&[WHITE, WHITE, WHITE]]));
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {
@@ -243,6 +246,7 @@ mod test {
     fn bbox_empty() {
         let img = construct_gray(&[]);
         assert!(is_img_empty(&img));
+        let img = Mask(img);
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {
@@ -257,12 +261,12 @@ mod test {
 
     #[test]
     fn bbox_left_edge() {
-        let img = construct_gray(&[
+        let img = Mask(construct_gray(&[
             &[BLACK, WHITE, WHITE, WHITE],
             &[BLACK, WHITE, WHITE, WHITE],
             &[BLACK, WHITE, WHITE, WHITE],
             &[BLACK, WHITE, WHITE, WHITE],
-        ]);
+        ]));
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {
@@ -277,12 +281,12 @@ mod test {
 
     #[test]
     fn bbox_right_edge() {
-        let img = construct_gray(&[
+        let img = Mask(construct_gray(&[
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
-        ]);
+        ]));
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {
@@ -297,12 +301,12 @@ mod test {
 
     #[test]
     fn bbox_top_right_corner() {
-        let img = construct_gray(&[
+        let img = Mask(construct_gray(&[
             &[BLACK, BLACK, BLACK, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
-        ]);
+        ]));
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {
@@ -317,12 +321,12 @@ mod test {
 
     #[test]
     fn bbox_surrounded() {
-        let img = construct_gray(&[
+        let img = Mask(construct_gray(&[
             &[BLACK, BLACK, BLACK, BLACK],
             &[BLACK, WHITE, WHITE, BLACK],
             &[BLACK, WHITE, WHITE, BLACK],
             &[BLACK, BLACK, BLACK, BLACK],
-        ]);
+        ]));
         let bbox = watermark_getbbox(&img, 0.0);
         assert_eq!(
             Rect {
