@@ -70,7 +70,6 @@ pub fn maskify(mut img: GrayImage, threshold: u8) -> Mask {
     Mask(img)
 }
 
-// TODO: test?
 pub fn percent_gray<I>(img: &I, color: Luma<u8>, tolerance: u8) -> f64
 where
     I: GenericImageView<Pixel = Luma<u8>>,
@@ -151,7 +150,6 @@ pub fn mirror(mut img: RgbImage) -> RgbImage {
     img
 }
 
-// TODO: test
 pub fn most_common_gray<I>(img: &I) -> Luma<u8>
 where
     I: GenericImageView<Pixel = Luma<u8>>,
@@ -231,6 +229,18 @@ mod test {
 
         let white = filled(100, 100, 255, 255, 255);
         assert_eq!(Rgb([255, 255, 255]), average_color(&white));
+    }
+
+    #[test]
+    fn gray_stuffs() {
+        let img1 = construct_gray(&[&[128, 200, 128]]);
+        assert_eq!(128, most_common_gray(&img1)[0]);
+
+        let exact = percent_gray(&img1, Luma([128]), 0);
+        assert!(exact >= 63.0 && exact <= 69.0);
+
+        let all = percent_gray(&img1, Luma([128]), 100);
+        assert!(all >= 97.0 && all <= 103.0);
     }
 
     #[test]
