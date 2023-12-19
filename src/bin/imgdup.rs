@@ -57,6 +57,14 @@ struct Cli {
     #[arg(long, default_value_t = usize::MAX)]
     limit: usize,
 
+    /// Skip this much from the beginning of every video if they are long enough
+    #[arg(long, default_value = "15s")]
+    video_skip: humantime::Duration,
+
+    /// Skip some amount from the beginning of every video if they are at least this long
+    #[arg(long, default_value = "1min")]
+    video_skip_if: humantime::Duration,
+
     /// A file to additionally write the logs to
     #[arg(long)]
     logfile: Option<PathBuf>,
@@ -189,6 +197,8 @@ fn main() -> eyre::Result<()> {
             ignored_hashes: &ignored_hashes,
             new_files: &new_files,
             repo_grave: repo_grave.as_ref(),
+            video_skip: cli.video_skip.into(),
+            video_skip_if: cli.video_skip_if.into(),
         };
 
         for _ in 0..video_threads {
@@ -234,6 +244,8 @@ mod video {
         pub ignored_hashes: &'env Ignored,
         pub new_files: &'env WorkQueue<&'env SimplePath>,
         pub repo_grave: Option<&'env Mutex<Repo>>,
+        pub video_skip: Duration,
+        pub video_skip_if: Duration,
     }
 
     pub fn main<'env>(
@@ -299,11 +311,15 @@ mod video {
         // log::debug!("Stepping with {}s", step.as_secs_f64());
 
         let mut graveyard_entry = LazyEntry::new();
-
         let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
-        let approx_len = Timestamp::duration_to_string(approx_len);
 
-        // TODO: skip the first N seconds if the total length is long enough
+        if !ctx.video_skip.is_zero() && approx_len >= ctx.video_skip_if {
+            extractor
+                .seek_forward(ctx.video_skip)
+                .wrap_err("Failed to do the initial video skip seek")?;
+        }
+
+        let approx_len = Timestamp::duration_to_string(approx_len);
 
         let mut last_logged = Instant::now();
         while let Some((ts, frame)) =
