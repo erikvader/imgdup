@@ -9,10 +9,10 @@ args! {
     #[derive(Copy, Clone)]
     RemoveBorders {
         "All gray values below this becomes black"
-        maskify_threshold: u8 = 40;
+        remove_borders_maskify_threshold: u8 = 40;
 
         "A mask line can contain this many percent of white and still be considered black"
-        maximum_whites: f64 = 0.1;
+        remove_borders_maximum_whites: f64 = 0.1;
     }
 }
 
@@ -28,11 +28,11 @@ impl RemoveBordersArgs {
         img: &'a RgbImage,
         mask: &Mask,
     ) -> SubImage<&'a RgbImage> {
-        let bbox = watermark_getbbox(&mask, self.maximum_whites);
+        let bbox = watermark_getbbox(&mask, self.remove_borders_maximum_whites);
         crop_imm(img, bbox.x, bbox.y, bbox.width, bbox.height)
     }
 
     pub fn maskify(self, img: GrayImage) -> Mask {
-        maskify(img, self.maskify_threshold)
+        maskify(img, self.remove_borders_maskify_threshold)
     }
 }
