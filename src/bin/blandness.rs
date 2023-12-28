@@ -2,18 +2,12 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use imgdup::bin_common::{
-    args::{blandness::BlandnessCli, one_color::OneColorCli},
-    init::init_eyre,
-};
+use imgdup::bin_common::{args::one_color::OneColorCli, init::init_eyre};
 
 #[derive(Parser)]
 #[command()]
 /// Calculates blandness of a picture
 struct Cli {
-    #[command(flatten)]
-    bland_args: BlandnessCli,
-
     #[command(flatten)]
     one_color_args: OneColorCli,
 
@@ -25,7 +19,6 @@ fn main() -> eyre::Result<()> {
     init_eyre()?;
     let cli = Cli::parse();
 
-    let bland_args = cli.bland_args.to_args();
     let one_color_args = cli.one_color_args.to_args();
 
     for input in cli.inputs {
@@ -33,16 +26,11 @@ fn main() -> eyre::Result<()> {
             .wrap_err_with(|| format!("Could not open {:?}", input))?
             .to_rgb8();
 
-        let blandness = bland_args.blandness(&pic);
-        let is_bland = bland_args.is_value_bland(blandness);
-
         let one_color = one_color_args.one_color(&pic);
         let is_one_color = one_color_args.is_value_too_one_color(one_color);
 
         let input = input.display();
-        println!(
-            "{input}: Bland={blandness}({is_bland}), one={one_color}({is_one_color})"
-        );
+        println!("{input}: one={one_color}({is_one_color})");
     }
 
     Ok(())

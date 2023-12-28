@@ -2,7 +2,6 @@ use image::{imageops::grayscale, RgbImage};
 
 use crate::{
     bin_common::args::{
-        blandness::{BlandnessArgs, BlandnessCli},
         one_color::{OneColorArgs, OneColorCli},
         remove_borders::{RemoveBordersArgs, RemoveBordersCli},
     },
@@ -16,7 +15,6 @@ args! {
     Preproc {
         border_args: RemoveBorders;
         one_color_args: OneColor;
-        bland_args: Blandness;
     }
 }
 
@@ -26,17 +24,11 @@ pub enum PreprocError {
     Empty,
     #[error("the image consists of too many pixels of the same color")]
     TooOneColor,
-    #[error("the image is too bland")]
-    TooBland,
 }
 
 impl PreprocArgs {
     /// Preprocesses the image and hashes it, unless it is deemed a bad picture
     pub fn hash_img(&self, img: &RgbImage) -> Result<Hamming, PreprocError> {
-        if self.bland_args.is_bland(img) {
-            return Err(PreprocError::TooBland);
-        }
-
         let gray = grayscale(img);
         let one_color = self.one_color_args.one_color_gray(&gray);
         if self.one_color_args.is_value_too_one_color(one_color) {

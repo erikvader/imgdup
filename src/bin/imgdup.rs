@@ -340,10 +340,7 @@ mod video {
                         hashes.push((ts, hash, Mirror::Mirrored));
                     }
                 }
-                err @ F::Ignored
-                | err @ F::Empty
-                | err @ F::TooOneColor
-                | err @ F::TooBland
+                err @ F::Ignored | err @ F::Empty | err @ F::TooOneColor
                     if ctx.repo_grave.is_some() =>
                 {
                     let entry =
@@ -359,11 +356,7 @@ mod video {
                         &frame,
                     )?;
                 }
-                F::TooOneColor
-                | F::TooBland
-                | F::TooSimilarToPrevious
-                | F::Ignored
-                | F::Empty => (),
+                F::TooOneColor | F::TooSimilarToPrevious | F::Ignored | F::Empty => (),
             }
 
             // TODO: add some randomness to the step?
@@ -377,7 +370,6 @@ mod video {
     enum FrameToHashResult {
         Empty,
         TooOneColor,
-        TooBland,
         Ignored,
         TooSimilarToPrevious,
         Ok(Hamming),
@@ -388,7 +380,6 @@ mod video {
             match self {
                 FrameToHashResult::Empty => "empty",
                 FrameToHashResult::TooOneColor => "too_one_color",
-                FrameToHashResult::TooBland => "too_bland",
                 FrameToHashResult::Ignored => "ignored",
                 FrameToHashResult::TooSimilarToPrevious => "similar_previous",
                 FrameToHashResult::Ok(_) => "ok",
@@ -405,7 +396,6 @@ mod video {
             Ok(hash) => hash,
             Err(PreprocError::Empty) => return FrameToHashResult::Empty,
             Err(PreprocError::TooOneColor) => return FrameToHashResult::TooOneColor,
-            Err(PreprocError::TooBland) => return FrameToHashResult::TooBland,
         };
 
         if ctx.ignored_hashes.is_ignored(ctx.simi_args, hash) {
