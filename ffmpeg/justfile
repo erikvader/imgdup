@@ -88,7 +88,7 @@ configure:
       {{arch_flags}}
 
 build:
-    cd {{source_dir}} && make -j {{num_cpus()}} install_dir
+    cd {{source_dir}} && make -j {{num_cpus()}} install
 
 clean:
     rm -vrf {{install_dir}} {{source_dir}}

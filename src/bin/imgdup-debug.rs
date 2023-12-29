@@ -166,6 +166,7 @@ fn save_collisions(
     images: HashMap<VidSrc, PreprocImage>,
     simi_args: &SimiArgs,
 ) -> eyre::Result<()> {
+    // TODO: set an upper bound on how many subfolders that can be created
     for Collision { other, reference } in collisions {
         let mut entry = repo_entry
             .sub_entry("collision")
