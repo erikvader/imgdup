@@ -78,12 +78,22 @@ impl<A: Into<f64>> Extend<A> for Variance {
     }
 }
 
+pub fn lerp(from_low: f64, from_up: f64, to_low: f64, to_up: f64, from: f64) -> f64 {
+    let perc = (from - from_low) / (from_up - from_low);
+    perc * (to_up - to_low) + to_low
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     fn float_cmp(a: f64, b: f64) -> bool {
         (a - b).abs() <= 0.01
+    }
+
+    #[test]
+    fn test_lerp() {
+        assert!(float_cmp(15.0, dbg!(lerp(1.0, 5.0, 10.0, 20.0, 3.0))));
     }
 
     #[test]

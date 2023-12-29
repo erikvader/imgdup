@@ -28,7 +28,7 @@ use imgdup::{
     imghash::hamming::Hamming,
     utils::{
         fsutils::{self, all_files, read_optional_file},
-        imgutils,
+        imgutils, math,
         repo::{LazyEntry, Repo},
         simple_path::{clap_simple_relative_parser, SimplePath, SimplePathBuf},
         work_queue::WorkQueue,
@@ -56,14 +56,6 @@ struct Cli {
     /// Only process up to this many new video files
     #[arg(long, default_value_t = usize::MAX)]
     limit: usize,
-
-    /// Skip this much from the beginning of every video if they are long enough
-    #[arg(long, default_value = "15s")]
-    video_skip: humantime::Duration,
-
-    /// Skip some amount from the beginning of every video if they are at least this long
-    #[arg(long, default_value = "1min")]
-    video_skip_if: humantime::Duration,
 
     /// A file to additionally write the logs to
     #[arg(long)]
@@ -197,8 +189,6 @@ fn main() -> eyre::Result<()> {
             ignored_hashes: &ignored_hashes,
             new_files: &new_files,
             repo_grave: repo_grave.as_ref(),
-            video_skip: cli.video_skip.into(),
-            video_skip_if: cli.video_skip_if.into(),
         };
 
         for _ in 0..video_threads {
@@ -244,8 +234,6 @@ mod video {
         pub ignored_hashes: &'env Ignored,
         pub new_files: &'env WorkQueue<&'env SimplePath>,
         pub repo_grave: Option<&'env Mutex<Repo>>,
-        pub video_skip: Duration,
-        pub video_skip_if: Duration,
     }
 
     pub fn main<'env>(
@@ -308,16 +296,25 @@ mod video {
         let log_every = Duration::from_secs(10);
 
         let step = calc_step(approx_len, min_frames, max_step);
-        // log::debug!("Stepping with {}s", step.as_secs_f64());
 
         let mut graveyard_entry = LazyEntry::new();
         let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
 
-        if !ctx.video_skip.is_zero() && approx_len >= ctx.video_skip_if {
+        let (video_skip, video_skip_end) = skip_beg_end(approx_len);
+
+        if !video_skip.is_zero() {
             extractor
-                .seek_forward(ctx.video_skip)
+                .seek_forward(video_skip)
                 .wrap_err("Failed to do the initial video skip seek")?;
         }
+
+        let end_ts = (!video_skip_end.is_zero()).then_some(()).and_then(|()| {
+            let res = approx_len.checked_sub(video_skip_end);
+            if res.is_none() {
+                log::warn!("Skip_end ({video_skip_end:?}) is larger than the total length ({approx_len:?}) of '{video}'");
+            }
+            res
+        });
 
         let approx_len = Timestamp::from_duration(approx_len).to_string();
 
@@ -325,6 +322,12 @@ mod video {
         while let Some((ts, frame)) =
             extractor.next().wrap_err("Failed to get a frame")?
         {
+            if let Some(end_ts) = end_ts {
+                if ts.to_duration() > end_ts {
+                    break;
+                }
+            }
+
             let now = Instant::now();
             if now - last_logged >= log_every {
                 last_logged = now;
@@ -417,6 +420,39 @@ mod video {
         maximum_step: Duration,
     ) -> Duration {
         std::cmp::min(maximum_step, video_length / minimum_frames.get())
+    }
+
+    /*
+     skip beg (and mostly end)
+     ^ 1m15s                        /-----------
+     |                             /
+     |                            /
+     |                           /
+     | 5s           ------------/
+     |
+     | 0s   ---------
+     -------|-------|-----------|---|----------> len
+            0s      10s        1m   3m
+    */
+    fn skip_beg_end(len: Duration) -> (Duration, Duration) {
+        if len <= Duration::from_secs(10) {
+            (Duration::ZERO, Duration::ZERO)
+        }
+        // this is
+        else if len <= Duration::from_secs(60) {
+            (Duration::from_secs(5), Duration::ZERO)
+        }
+        // unreadable
+        else if len <= Duration::from_secs(3 * 60) {
+            let skip = math::lerp(60.0, 3.0 * 60.0, 5.0, 60.0 + 15.0, len.as_secs_f64());
+            let skip = Duration::from_secs_f64(skip);
+            (skip, skip)
+        }
+        // otherwise
+        else {
+            let skip = Duration::from_secs(60 + 15);
+            (skip, skip)
+        }
     }
 
     fn estimated_num_of_frames(video_length: Duration, step: Duration) -> usize {
