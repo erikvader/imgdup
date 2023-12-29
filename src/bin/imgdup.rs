@@ -319,7 +319,7 @@ mod video {
                 .wrap_err("Failed to do the initial video skip seek")?;
         }
 
-        let approx_len = Timestamp::duration_to_string(approx_len);
+        let approx_len = Timestamp::from_duration(approx_len).to_string();
 
         let mut last_logged = Instant::now();
         while let Some((ts, frame)) =

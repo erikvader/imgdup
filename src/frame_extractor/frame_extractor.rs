@@ -1,6 +1,5 @@
 extern crate ffmpeg_next as ffmpeg;
 
-
 use std::cell::RefCell;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -262,17 +261,17 @@ impl FrameExtractor {
             return Ok(());
         }
 
-        let target = self.cur_timestamp + duration2timestamp(dur, self.timebase);
+        let target =
+            self.cur_timestamp + Timestamp::from_duration(dur).timestamp(self.timebase);
         // TODO: don't seek, or undo it, if this jumps back, it will just decode
         // the same frames again. Seek to the old frame with AVSEEK_FLAG_ANY?
         self.seek_internal(target).wrap_err_with(|| {
             format!(
                 "Failed when trying to seek forward {} from {}",
                 humantime::Duration::from(dur),
-                humantime::Duration::from(timestamp2duration(
-                    self.cur_timestamp,
-                    self.timebase
-                ))
+                humantime::Duration::from(
+                    Timestamp::new_abs(self.cur_timestamp, self.timebase).to_duration()
+                )
             )
         })
     }
@@ -323,7 +322,7 @@ impl FrameExtractor {
             ..
         } = self;
 
-        timestamp2duration(end_timestamp - first_timestamp, *timebase)
+        Timestamp::new(*end_timestamp, *timebase, *first_timestamp).to_duration()
     }
 }
 
@@ -420,23 +419,6 @@ fn create_rust_image(converted: FrameVideo) -> RgbImage {
         data,
     )
     .expect("the buffer is big enough!")
-}
-
-fn duration2timestamp(dur: Duration, timebase: Rational) -> i64 {
-    let step: i64 = dur
-        .as_millis()
-        .try_into()
-        .expect("will probably not be that big");
-    let to_seconds = Rational::new(1, 1000);
-    // NOTE: This is: step * to_seconds / timebase
-    step.rescale(to_seconds, timebase)
-}
-
-fn timestamp2duration(timestamp: i64, timebase: Rational) -> Duration {
-    let to_seconds = Rational::new(1, 1000);
-    // NOTE: timestamp * timebase / to_seconds
-    let millis = std::cmp::max(0, timestamp.rescale(timebase, to_seconds));
-    Duration::from_millis(millis.try_into().expect("probably not a problem"))
 }
 
 fn stream_set_discard_all(stream: &mut ffmpeg::StreamMut<'_>) {

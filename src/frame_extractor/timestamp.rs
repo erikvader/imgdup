@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use ffmpeg::Rational;
+use ffmpeg::{Rational, Rescale};
 use rkyv::{Archive, Serialize};
 
 extern crate ffmpeg_next as ffmpeg;
@@ -22,6 +22,34 @@ impl Timestamp {
             timebase_numerator: timebase.numerator(),
             timebase_denominator: timebase.denominator(),
         }
+    }
+
+    pub(super) fn new_abs(ts: i64, timebase: Rational) -> Self {
+        Self::new(ts, timebase, 0)
+    }
+
+    pub fn from_duration(dur: Duration) -> Self {
+        let millis: i64 = dur
+            .as_millis()
+            .try_into()
+            .expect("will probably not be that big");
+        let to_seconds = Rational::new(1, 1000);
+        Self::new_abs(millis, to_seconds)
+    }
+
+    pub fn to_duration(&self) -> Duration {
+        let to_seconds = Rational::new(1, 1000);
+        // NOTE: timestamp * timebase / to_seconds
+        let millis = std::cmp::max(0, self.timestamp(to_seconds));
+        Duration::from_millis(millis.try_into().expect("probably not a problem"))
+    }
+
+    pub(super) fn timestamp(&self, target: Rational) -> i64 {
+        (self.timestamp - self.first_timestamp).rescale(self.timebase(), target)
+    }
+
+    fn timebase(&self) -> Rational {
+        Rational::new(self.timebase_numerator, self.timebase_denominator)
     }
 
     fn parts(&self) -> (bool, f64, f64, f64, f64) {
@@ -49,17 +77,6 @@ impl Timestamp {
         let seconds = total;
 
         (negative, hours, minutes, seconds, subsec)
-    }
-
-    pub fn duration_to_string(dur: Duration) -> String {
-        Timestamp::new(
-            dur.as_millis()
-                .try_into()
-                .expect("is probably not that big"),
-            Rational::new(1, 1000),
-            0,
-        )
-        .to_string()
     }
 }
 
@@ -98,5 +115,15 @@ mod test {
 
         let ts = Timestamp::new(1005, Rational::new(1, 1000), 0);
         assert_eq!("00:00:01.005", ts.to_string());
+    }
+
+    #[test]
+    fn timestamp_duration() {
+        let stamp = Timestamp::new(600, Rational::new(1, 500), 100);
+        assert_eq!(Duration::from_secs(1), stamp.to_duration());
+
+        let stamp = Timestamp::from_duration(Duration::from_secs(2));
+        let ts = stamp.timestamp(Rational::new(1, 500));
+        assert_eq!(1000, ts);
     }
 }
