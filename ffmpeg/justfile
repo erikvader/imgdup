@@ -7,7 +7,7 @@ install_dir := "install"
 prefix_dir := justfile_directory() / install_dir
 
 rpath_dir := prefix_dir / "lib"
-rpath := "true"
+rpath := "false"
 
 # Flags copied from https://gitlab.archlinux.org/archlinux/packaging/packages/ffmpeg/-/blob/2-6.0-13/PKGBUILD?ref_type=tags
 # Removed:

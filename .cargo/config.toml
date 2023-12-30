@@ -1,5 +1,0 @@
-[env]
-FFMPEG_DIR = "/home/erik/Documents/imgdup/ffmpeg/install"
-
-[build]
-rustflags = ["-C", "link-arg=-Wl,-rpath,/home/erik/Documents/imgdup/ffmpeg/install/lib"]
