@@ -208,6 +208,7 @@ impl FileArray {
         self.with_file(|file| file.get_ref().try_clone())
     }
 
+    #[allow(dead_code)]
     #[cfg(test)]
     pub fn raw_data(&self) -> &[u8] {
         let len = self.len();
