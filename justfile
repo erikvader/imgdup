@@ -19,6 +19,8 @@ uninstall-wrapper:
     #TODO: find a better way to prepend stuff to a list
     rm -f '{{install_dir / runner}}' $(printf -- '{{bin_dir}}/%s ' {{targets}})
 
+set positional-arguments
+
 @run MODE BIN *ARGS:
     cargo build {{ if MODE == "release" {"--release"} else {""} }} --bin {{BIN}} >/dev/null 2>&1
-    BINS={{justfile_directory()}}/target/{{MODE}} SELF={{BIN}} sh {{runner}} {{ARGS}}
+    BINS='{{justfile_directory()}}/target/{{MODE}}' SELF={{BIN}} sh '{{justfile_directory() / runner}}' "${@:3}"

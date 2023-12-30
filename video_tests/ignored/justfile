@@ -1,4 +1,6 @@
-# Make sure that the very first frame is ignored and is placed in the graveyard.
+# Make sure that the ignored frame is ignored and is placed in the graveyard.
+
+import '../lib.just'
 
 default:
     @just --list --justfile '{{justfile()}}'
@@ -11,4 +13,4 @@ mkdirs:
     mkdir -p _GRAVEYARD_ _DUPS_
 
 run: reset mkdirs
-    cargo run --release --bin imgdup
+    {{rootjust}} run release imgdup

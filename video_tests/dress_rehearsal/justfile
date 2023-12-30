@@ -1,5 +1,7 @@
 # Will do exactly the same thing as the real deal, but with fewer video files
 
+import '../lib.just'
+
 default:
     @just --list --justfile '{{justfile()}}'
 
@@ -13,4 +15,4 @@ mkdirs:
 run: reset run-no-reset
 
 run-no-reset: mkdirs
-    cargo run --release --bin imgdup
+    {{rootjust}} run release imgdup
