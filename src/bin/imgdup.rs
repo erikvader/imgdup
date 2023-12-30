@@ -289,6 +289,10 @@ mod video {
         let mut extractor = FrameExtractor::new(video.as_path())
             .wrap_err("Failed to create the extractor")?;
         let approx_len = extractor.approx_length();
+        log::debug!(
+            "The video is approx {} long",
+            humantime::Duration::from(approx_len)
+        );
 
         // TODO: move to some config struct and add to Ctx
         let min_frames: NonZeroU32 = NonZeroU32::new(5).unwrap();
@@ -300,7 +304,13 @@ mod video {
         let mut graveyard_entry = LazyEntry::new();
         let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
 
-        let (video_skip, video_skip_end) = skip_beg_end(approx_len);
+        // TODO: a flag to skip doing this? For tests maybe?
+        let (video_skip, video_skip_end): (Duration, Duration) = skip_beg_end(approx_len);
+        log::debug!(
+            "Will skip {} from the beginning and {} from the end",
+            humantime::Duration::from(video_skip),
+            humantime::Duration::from(video_skip_end)
+        );
 
         if !video_skip.is_zero() {
             extractor
@@ -339,8 +349,13 @@ mod video {
                 F::Ok(hash) => {
                     hashes.push((ts.clone(), hash, Mirror::Normal));
                     let mirror = imgutils::mirror(frame);
-                    if let F::Ok(hash) = frame_to_hash(ctx, &mirror, Some(hash)) {
-                        hashes.push((ts, hash, Mirror::Mirrored));
+                    match frame_to_hash(ctx, &mirror, Some(hash)) {
+                        F::Ok(hash) => {
+                            hashes.push((ts, hash, Mirror::Mirrored));
+                        }
+                        e => {
+                            log::warn!("Hashing the mirrored frame didn't work: {e:?}");
+                        }
                     }
                 }
                 err @ F::Ignored | err @ F::Empty | err @ F::TooOneColor
@@ -370,6 +385,7 @@ mod video {
         Ok(hashes)
     }
 
+    #[derive(Debug)]
     enum FrameToHashResult {
         Empty,
         TooOneColor,
@@ -423,36 +439,45 @@ mod video {
     }
 
     /*
-     skip beg (and mostly end)
-     ^ 1m15s                        /-----------
+     skip beg and end
+     ^ 1m15s                        4-----------
      |                             /
      |                            /
      |                           /
-     | 5s           ------------/
+     | 5s           2-----------3
      |
-     | 0s   ---------
+     | 0s   1--------
      -------|-------|-----------|---|----------> len
-            0s      10s        1m   3m
+            0s      30s        1m   5m
     */
     fn skip_beg_end(len: Duration) -> (Duration, Duration) {
-        if len <= Duration::from_secs(10) {
-            (Duration::ZERO, Duration::ZERO)
+        const S1: Duration = Duration::ZERO;
+        const L2: f64 = 30.;
+        const L3: f64 = 60.;
+        const S3: f64 = 5.;
+        const L4: f64 = 5. * 60.;
+        const S4: f64 = 60. + 15.;
+
+        let skip =
+        // this
+        if len < Duration::from_secs_f64(L2) {
+            S1
         }
-        // this is
-        else if len <= Duration::from_secs(60) {
-            (Duration::from_secs(5), Duration::ZERO)
+        // is
+        else if len <= Duration::from_secs_f64(L3) {
+            Duration::from_secs_f64(S3)
         }
         // unreadable
-        else if len <= Duration::from_secs(3 * 60) {
-            let skip = math::lerp(60.0, 3.0 * 60.0, 5.0, 60.0 + 15.0, len.as_secs_f64());
+        else if len <= Duration::from_secs_f64(L4) {
+            let skip = math::lerp(L3, L4, S3, S4, len.as_secs_f64());
             let skip = Duration::from_secs_f64(skip);
-            (skip, skip)
+            skip
         }
         // otherwise
         else {
-            let skip = Duration::from_secs(60 + 15);
-            (skip, skip)
-        }
+            Duration::from_secs_f64(S4)
+        };
+        (skip, skip)
     }
 
     fn estimated_num_of_frames(video_length: Duration, step: Duration) -> usize {
