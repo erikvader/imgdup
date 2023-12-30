@@ -19,6 +19,7 @@ use imgdup::{
         },
         ignored_hashes::{read_ignored, Ignored},
         init::{init_eyre, init_logger},
+        termination,
     },
     bktree::{
         mmap::bktree::BKTree,
@@ -180,6 +181,9 @@ fn main() -> eyre::Result<()> {
         None
     };
 
+    let term_cookie =
+        termination::Cookie::new().wrap_err("failed to create term cookie")?;
+
     let finished_workers = scoped_workers(|s| {
         let (tx, rx) = mpsc::sync_channel::<Payload>(16);
 
@@ -189,6 +193,7 @@ fn main() -> eyre::Result<()> {
             ignored_hashes: &ignored_hashes,
             new_files: &new_files,
             repo_grave: repo_grave.as_ref(),
+            term_cookie: &term_cookie,
         };
 
         for _ in 0..video_threads {
@@ -199,6 +204,7 @@ fn main() -> eyre::Result<()> {
 
         let tree_ctx = tree::Ctx {
             simi_args: &simi_args,
+            term_cookie: &term_cookie,
         };
         s.spawn("T", move || tree::main(tree_ctx, rx, tree, repo_dup));
     });
@@ -234,6 +240,7 @@ mod video {
         pub ignored_hashes: &'env Ignored,
         pub new_files: &'env WorkQueue<&'env SimplePath>,
         pub repo_grave: Option<&'env Mutex<Repo>>,
+        pub term_cookie: &'env termination::Cookie,
     }
 
     pub fn main<'env>(
@@ -245,6 +252,11 @@ mod video {
         let mut failed = Vec::new();
 
         while let Some((i, vid_path)) = ctx.new_files.next_index() {
+            if ctx.term_cookie.is_terminating() {
+                log::warn!("Termination signal received");
+                break;
+            }
+
             log::info!("Progress: {}/{} videos", i + 1, ctx.new_files.len());
             let hashes = match get_hashes(ctx, vid_path) {
                 Ok(ok) => ok,
@@ -508,9 +520,9 @@ mod tree {
     #[derive(Clone, Copy)]
     pub struct Ctx<'env> {
         pub simi_args: &'env SimiArgs,
+        pub term_cookie: &'env termination::Cookie,
     }
 
-    // TODO: handle ctrl+c and properly close the db
     pub fn main<'env>(
         ctx: Ctx<'env>,
         rx: mpsc::Receiver<Payload<'env>>,
@@ -519,8 +531,12 @@ mod tree {
     ) -> eyre::Result<()> {
         log::debug!("Tree worker working");
 
-        // TODO: timea de olika stegen och kolla vilken som är långsammast
         while let Ok(Payload { video_path, hashes }) = rx.recv() {
+            if ctx.term_cookie.is_terminating() {
+                log::warn!("Termination signal received");
+                break;
+            }
+
             log::info!("Finding dups of: {}", video_path);
             let similar_videos = find_similar_videos(ctx, &hashes, &mut tree)
                 .wrap_err("failed to find similar videos")?;
@@ -541,7 +557,7 @@ mod tree {
         tree.close().wrap_err("failed to close the tree")?;
         log::info!("Closed!");
 
-        log::debug!("Tree worker not working");
+        log::debug!("Tree worker ended");
 
         Ok(())
     }

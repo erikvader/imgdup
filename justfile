@@ -25,6 +25,6 @@ uninstall-wrapper:
 set positional-arguments
 # Builds and runs a bin using the wrapper to make sure the correct shared libraries are
 # used.
-@run MODE BIN *ARGS:
+run MODE BIN *ARGS:
     cargo build {{ if MODE == "release" {"--release"} else {""} }} --bin {{BIN}} >/dev/null 2>&1
     BINS='{{justfile_directory()}}/target/{{MODE}}' SELF={{BIN}} sh '{{justfile_directory() / runner}}' "${@:3}"
