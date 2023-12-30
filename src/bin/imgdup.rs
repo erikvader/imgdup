@@ -551,9 +551,14 @@ mod tree {
         tree: &mut BKTree<VidSrc>,
         video_path: &SimplePath,
     ) -> eyre::Result<()> {
-        tree.add_all(hashes.into_iter().map(|(ts, hash, mirrored)| {
-            (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
-        }))
+        tree.add_all(
+            hashes
+                .into_iter()
+                .filter(|(_, _, mirrored)| *mirrored == Mirror::Normal)
+                .map(|(ts, hash, mirrored)| {
+                    (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
+                }),
+        )
         .wrap_err("failed to add to the tree")?;
         Ok(())
     }

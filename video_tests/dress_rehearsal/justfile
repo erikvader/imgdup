@@ -1,4 +1,8 @@
-# Will do exactly the same thing as the real deal, but with fewer video files
+# Will do exactly the same thing as the real deal, but with fewer video files.
+# Expected results:
+# - The ignored frame(s) should show up in the graveyard.
+# - One dup should appear.
+# - Only one collision per frame, not two, where two mirrored frames match each other.
 
 import '../lib.just'
 
@@ -12,7 +16,10 @@ reset:
 mkdirs:
     mkdir -p _GRAVEYARD_ _DUPS_
 
-run: reset run-no-reset
+run: reset run-no-reset debug
 
 run-no-reset: mkdirs
     {{rootjust}} run release imgdup
+
+debug:
+    {{rootjust}} run release imgdup-debug --all --database-file imgdup.db --entry-dir _DUPS_
