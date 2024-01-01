@@ -55,7 +55,8 @@ impl FrameExtractor {
     // reference, but its used in a thread_local that a ffmpeg callback function is using
     // to add what file produced the log message. And also to `Result` messages as
     // context, but the upstream function could do that instead, which is better because
-    // it could add them in one spot.
+    // it could add them in one spot. Maybe some kind of structured logging is the
+    // solution here?
 
     // TODO: I don't like that this whole module logs. The `next` method could maybe
     // return either a frame or a log message that was produced when retrieving the next
@@ -102,17 +103,27 @@ impl FrameExtractor {
             .ok_or(eyre::eyre!("No video stream"))?;
 
         let video_stream_index = video.index();
-        assert_ne!(AV_NOPTS_VALUE, video.start_time());
+        eyre::ensure!(
+            video.start_time() != AV_NOPTS_VALUE,
+            "Does not have a start time"
+        );
         let cur_timestamp = video.start_time();
         let seek_target_timestamp = video.start_time();
         let first_timestamp = video.start_time();
         let timebase = video.time_base();
         let end_timestamp = if video.duration() == AV_NOPTS_VALUE {
-            assert_ne!(AV_NOPTS_VALUE, ictx.duration());
+            eyre::ensure!(
+                ictx.duration() != AV_NOPTS_VALUE,
+                "Does not have a duration"
+            );
             ictx.duration().rescale(AV_TIME_BASE_Q, timebase)
         } else {
             video.duration()
         };
+        eyre::ensure!(
+            end_timestamp >= cur_timestamp,
+            "The end timestamp is less than the start"
+        );
 
         let orientation = get_orientation(&video);
 
@@ -143,7 +154,7 @@ impl FrameExtractor {
     }
 
     fn pixel_converter(decoder: &DecoderVideo) -> Result<ScalingContext> {
-        assert_ne!(Pixel::None, decoder.format());
+        eyre::ensure!(decoder.format() != Pixel::None, "No pixel format");
         Ok(ScalingContext::get(
             decoder.format(),
             decoder.width(),

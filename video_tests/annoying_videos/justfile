@@ -6,7 +6,7 @@ default:
 reset:
     rm -vrf frames_*
 
-run: reset run-vertical run-faulty run-analyze run-invalid run-oriented run-notimestamps
+run: reset run-vertical run-faulty run-analyze run-invalid run-oriented run-notimestamps run-noend
 
 videovertical := 'vertical-5hImWP9_h_0.mkv'
 # - The width is not a multiple of 16, so there is padding in the RGB buffer
@@ -40,3 +40,9 @@ videonotimestamps := 'Gigant 121.avi'
 # the video. Shouldn't panic.
 run-notimestamps:
     {{rootjust}} run release frame_extractor --step 1s --outdir frames_notimestamp --num 20 --offset '4h 1min 20s' "{{videonotimestamps}}"
+
+videonoend := 'giddlp.mp4'
+# This video is corrupt, so ffmpeg can't figure out its estimated duration and panics.
+# The extractor should fail with "no duration" and not panic.
+run-noend:
+    -{{rootjust}} run release frame_extractor --step 1s --outdir frames_noend --num 2 "{{videonoend}}"
