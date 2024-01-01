@@ -209,15 +209,26 @@ fn main() -> eyre::Result<()> {
         s.spawn("T", move || tree::main(tree_ctx, rx, tree, repo_dup));
     });
 
-    for FinishedWorker { result, name } in finished_workers {
-        match result {
-            Err(panic) => log::error!("Thread '{name}' panicked with: {panic}"),
-            Ok(Err(e)) => log::error!("Thread '{name}' returned an error: {e:?}"),
-            Ok(Ok(())) => (),
-        }
-    }
+    let all_ok = finished_workers
+        .into_iter()
+        .map(|FinishedWorker { result, name }| match result {
+            Err(panic) => {
+                log::error!("Thread '{name}' panicked with: {panic}");
+                false
+            }
+            Ok(Err(e)) => {
+                log::error!("Thread '{name}' returned an error: {e:?}");
+                false
+            }
+            Ok(Ok(())) => true,
+        })
+        .all(std::convert::identity);
 
-    Ok(())
+    if all_ok {
+        Ok(())
+    } else {
+        Err(eyre::eyre!("At least one worker thread errored"))
+    }
 }
 
 mod common {

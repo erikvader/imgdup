@@ -1,24 +1,37 @@
 use std::{fs::File, path::Path};
 
-use color_eyre::eyre::{self, Context};
+use color_eyre::{
+    config::{HookBuilder, Theme},
+    eyre::{self, Context},
+};
+use simplelog::*;
 
 pub fn init_eyre() -> eyre::Result<()> {
-    use color_eyre::config::{HookBuilder, Theme};
-    let eyre_color = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+    let eyre_color = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
         Theme::dark()
     } else {
         Theme::new()
     };
 
-    HookBuilder::default()
-        .theme(eyre_color)
+    let (stderr_panic_hook, eyre_hook) =
+        HookBuilder::default().theme(eyre_color).into_hooks();
+    eyre_hook
         .install()
-        .wrap_err("Failed to install eyre")
+        .wrap_err("failed to install eyre hook")?;
+
+    let (log_panic_hook, _) = HookBuilder::default().theme(Theme::new()).into_hooks();
+
+    std::panic::set_hook(Box::new(move |info| {
+        // NOTE: The default: https://docs.rs/color-eyre/0.6.2/src/color_eyre/config.rs.html#981
+        eprintln!("{}", stderr_panic_hook.panic_report(info));
+
+        log::error!(target: "panic", "{}", log_panic_hook.panic_report(info));
+    }));
+
+    Ok(())
 }
 
 pub fn init_logger(logfile: Option<&Path>) -> eyre::Result<()> {
-    use simplelog::*;
-
     let mut builder = ConfigBuilder::new();
     builder.set_thread_level(LevelFilter::Error);
     builder.set_target_level(LevelFilter::Error);

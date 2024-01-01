@@ -18,7 +18,7 @@ plotters = "0.3"
 rayon = "1.8"
 
 # For imgdup
-signal-hook = "0.3"
+signal-hook = {version = "0.3", default_features = false}
 
 # For the heap on the file system
 rusqlite = {version = "0.29", features = ["blob"]}
@@ -58,6 +58,7 @@ opt-level = 3
 [profile.release]
 # NOTE: its nice to have debuginfo
 # strip = "debuginfo"
-
+# NOTE: in fact, lets make sure some are actually included, but not everything
+debug = "limited"
 # NOTE: optimizes between crates
 lto = "thin"
