@@ -50,6 +50,29 @@ thread_local! {
     static PATH: RefCell<PathBuf> = RefCell::new(PathBuf::new());
 }
 
+macro_rules! path_log {
+    ($level:ident, $fmt:literal) => {
+        PATH.with_borrow(|path| {
+            log::$level!(concat!($fmt, " ({})"), path.display())
+        })
+    };
+    ($level:ident, $fmt:literal, $($arg:tt)+) => {
+        PATH.with_borrow(|path| {
+            log::$level!(concat!($fmt, " ({})"), $($arg)+, path.display())
+        })
+    };
+    (target: $target:expr, $level:expr, $fmt:literal) => {
+        PATH.with_borrow(|path| {
+            log::log!(target: $target, $level, concat!($fmt, " ({})"), path.display())
+        })
+    };
+    (target: $target:expr, $level:expr, $fmt:literal, $($arg:tt)+) => {
+        PATH.with_borrow(|path| {
+            log::log!(target: $target, $level, concat!($fmt, " ({})"), $($arg)+, path.display())
+        })
+    };
+}
+
 impl FrameExtractor {
     // NOTE: Its a little bit ugly that this takes ownership of the path, it should take a
     // reference, but its used in a thread_local that a ffmpeg callback function is using
@@ -209,13 +232,11 @@ impl FrameExtractor {
                     *cur_timestamp = ts;
                 } else {
                     let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
-                    PATH.with_borrow(|path| {
-                        log::warn!(
-                            "Frame doesn't have a timestamp somewhere after: {} ({})",
-                            dur,
-                            path.display()
-                        )
-                    });
+                    path_log!(
+                        warn,
+                        "Frame doesn't have a timestamp somewhere after: {}",
+                        dur
+                    );
                     continue;
                 }
 
@@ -242,12 +263,7 @@ impl FrameExtractor {
                         match decoder.send_packet(&packet) {
                             Ok(()) => break,
                             Err(e) => {
-                                PATH.with_borrow(|path| {
-                                    log::error!(
-                                        "Failed to decode frame: {e} ({})",
-                                        path.display()
-                                    )
-                                });
+                                path_log!(error, "Failed to decode frame: {}", e);
                                 continue;
                             }
                         }
@@ -363,7 +379,7 @@ fn get_orientation(video: &ffmpeg::Stream) -> Orientation {
                 180 | -180 => Orientation::Upside,
                 x => {
                     // TODO: should this even be logged?
-                    log::warn!("Weird orientation angle: {x}");
+                    path_log!(warn, "Weird orientation angle: {}", x);
                     Orientation::Normal
                 }
             };
@@ -577,7 +593,5 @@ unsafe extern "C" fn ffmpeg_log_adaptor(
         Err(_) => log::Level::Info,
     };
 
-    PATH.with_borrow(
-        |path| log::log!(target: &target, level, "{rust_str} ({})", path.display()),
-    );
+    path_log!(target: &target, level, "{}", rust_str);
 }
