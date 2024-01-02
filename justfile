@@ -1,3 +1,6 @@
+set positional-arguments
+set ignore-comments
+
 default:
     @just --list --justfile '{{justfile()}}'
 
@@ -22,7 +25,6 @@ uninstall-wrapper:
     #TODO: find a better way to prepend stuff to a list
     rm -f '{{install_dir / runner}}' $(printf -- '{{bin_dir}}/%s ' {{targets}})
 
-set positional-arguments
 # Builds and runs a bin using the wrapper to make sure the correct shared libraries are
 # used.
 run MODE BIN *ARGS:
