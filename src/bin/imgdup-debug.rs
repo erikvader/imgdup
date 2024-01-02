@@ -14,7 +14,7 @@ use imgdup::{
         },
         init::{init_eyre, init_logger},
     },
-    bktree::{mmap::bktree::BKTree, source_types::video_source::VidSrc},
+    bktree::{bktree::BKTree, source_types::video_source::VidSrc},
     frame_extractor::frame_extractor::FrameExtractor,
     imghash::hamming::Hamming,
     utils::{

@@ -16,7 +16,7 @@ use imgdup::{
         init::{init_eyre, init_logger},
     },
     bktree::{
-        mmap::bktree::BKTree,
+        bktree::BKTree,
         source_types::{any_source::AnySource, video_source::VidSrc},
     },
 };

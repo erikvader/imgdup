@@ -8,8 +8,6 @@ pub type Container = u128;
 #[derive(
     Clone,
     Copy,
-    serde::Serialize,
-    serde::Deserialize,
     Debug,
     PartialEq,
     Eq,

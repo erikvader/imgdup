@@ -22,7 +22,7 @@ use imgdup::{
         termination,
     },
     bktree::{
-        mmap::bktree::BKTree,
+        bktree::BKTree,
         source_types::video_source::{Mirror, VidSrc},
     },
     frame_extractor::{frame_extractor::FrameExtractor, timestamp::Timestamp},

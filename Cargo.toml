@@ -14,18 +14,9 @@ simplelog = "0.12"
 # TODO: reduce features
 plotters = "0.3"
 
-# For multiprocessing
-rayon = "1.8"
-
 # For imgdup
+rayon = "1.8"
 signal-hook = {version = "0.3", default_features = false}
-
-# For the heap on the file system
-rusqlite = {version = "0.29", features = ["blob"]}
-serde = {version = "1", features = ["derive"]}
-bincode = "1"
-indexmap = "1"
-const_format = "0.2"
 
 # For video processing
 ffmpeg-next = "=6.0" # NOTE: does not follow semver
