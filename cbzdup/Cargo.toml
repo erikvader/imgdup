@@ -1,0 +1,15 @@
+[package]
+name = "cbzdup"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+imgdup-common.path = "../imgdup-common"
+
+thiserror.workspace = true
+color-eyre.workspace = true
+log.workspace = true
+
+zip.workspace = true
+image.workspace = true
+clap.workspace = true
