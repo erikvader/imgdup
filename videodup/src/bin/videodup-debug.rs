@@ -5,7 +5,8 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use common_libs::{
+use image::RgbImage;
+use imgdup_common::{
     bin_common::{
         args::{
             preproc::{PreprocArgs, PreprocCli},
@@ -20,7 +21,6 @@ use common_libs::{
         simple_path::{SimplePath, SimplePathBuf},
     },
 };
-use image::RgbImage;
 use videodup::{frame_extractor::FrameExtractor, video_source::VidSrc};
 
 #[derive(Parser, Debug)]

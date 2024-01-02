@@ -6,7 +6,7 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use common_libs::{
+use imgdup_common::{
     bin_common::args::{
         preproc::{PreprocArgs, PreprocCli},
         similarity::{SimiArgs, SimiCli},

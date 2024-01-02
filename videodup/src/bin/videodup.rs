@@ -10,7 +10,8 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use common::Payload;
-use common_libs::{
+use image::RgbImage;
+use imgdup_common::{
     bin_common::{
         args::{
             preproc::{PreprocArgs, PreprocCli, PreprocError},
@@ -31,7 +32,6 @@ use common_libs::{
         workers::{scoped_workers, FinishedWorker},
     },
 };
-use image::RgbImage;
 use rayon::prelude::*;
 use videodup::{
     frame_extractor::{FrameExtractor, Timestamp},

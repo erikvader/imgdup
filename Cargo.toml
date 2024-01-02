@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "common-libs",
+  "imgdup-common",
   "videodup",
 ]
 resolver = "2"

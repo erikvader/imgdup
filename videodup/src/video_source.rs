@@ -3,7 +3,7 @@ use std::fmt;
 use rkyv::{Archive, Serialize};
 
 use crate::frame_extractor::timestamp::{ArchivedTimestamp, Timestamp};
-use common_libs::{
+use imgdup_common::{
     bktree::source_types::Source,
     utils::simple_path::{SimplePath, SimplePathBuf},
 };

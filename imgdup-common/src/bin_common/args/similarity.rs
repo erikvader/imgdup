@@ -4,6 +4,9 @@ use super::args_helper::args;
 
 args! {
     #[derive(Copy, Clone)]
+    // NOTE: in case the default needs to be different between videodup and cbzdup: create
+    // two copies of this in their respective crates, probably easier than trying to
+    // figure out how to override the default value.
     Simi {
         "Maximum distance for two images to be considered equal"
         similarity_threshold: Distance = 23;
