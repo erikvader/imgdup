@@ -11,7 +11,7 @@ use rkyv::vec::ArchivedVec;
 use rkyv::{Archive, CheckBytes, Serialize};
 
 use super::file_array::{self, FileArray, Ref};
-use crate::bktree::source_types::any_source::AnySource;
+use crate::bktree::source_types::AnySource;
 use crate::bktree::source_types::{PartialSource, Source};
 use crate::imghash::hamming::{Distance, Hamming};
 
@@ -140,7 +140,7 @@ where
     }
 
     fn new(mut db: FileArray) -> Result<Self> {
-        let source_ident = S::identifier();
+        let source_ident = S::partial_identifier();
 
         if db.is_empty() {
             init_meta(
@@ -532,9 +532,7 @@ mod test {
 
     use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
-    use crate::bktree::source_types::{
-        any_source::AnySource, string_source::StringSource,
-    };
+    use crate::bktree::source_types::{string_source::StringSource, AnySource};
 
     use super::*;
 

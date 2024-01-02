@@ -15,7 +15,7 @@ use common_libs::{
         ignored_hashes::read_ignored,
         init::{init_eyre, init_logger},
     },
-    bktree::{bktree::BKTree, source_types::any_source::AnySource},
+    bktree::{bktree::BKTree, source_types::AnySource},
 };
 use videodup::video_source::VidSrc;
 

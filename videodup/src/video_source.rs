@@ -4,7 +4,7 @@ use rkyv::{Archive, Serialize};
 
 use crate::frame_extractor::timestamp::{ArchivedTimestamp, Timestamp};
 use common_libs::{
-    bktree::source_types::{PartialSource, Source},
+    bktree::source_types::Source,
     utils::simple_path::{SimplePath, SimplePathBuf},
 };
 
@@ -91,9 +91,8 @@ impl ArchivedVidSrc {
     }
 }
 
-impl PartialSource for VidSrc {
-    fn identifier() -> Option<&'static str> {
-        Some("video:1")
+impl Source for VidSrc {
+    fn identifier() -> &'static str {
+        "video:1"
     }
 }
-impl Source for VidSrc {}

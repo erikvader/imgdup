@@ -6,12 +6,11 @@ use rkyv::{Archive, Serialize};
 #[archive(check_bytes)]
 pub struct StringSource(pub String);
 
-impl super::PartialSource for StringSource {
-    fn identifier() -> Option<&'static str> {
-        Some("string:1")
+impl super::Source for StringSource {
+    fn identifier() -> &'static str {
+        "string:1"
     }
 }
-impl super::Source for StringSource {}
 
 impl Deref for StringSource {
     type Target = str;
