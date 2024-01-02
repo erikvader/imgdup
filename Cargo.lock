@@ -332,6 +332,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
+name = "common-libs"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "clap",
+ "color-eyre",
+ "derivative",
+ "humantime",
+ "image",
+ "image_hasher",
+ "log",
+ "memmap2",
+ "paste",
+ "plotters",
+ "rand",
+ "replace_with",
+ "rkyv",
+ "signal-hook",
+ "simplelog",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "const-cstr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -833,34 +857,6 @@ dependencies = [
  "rustdct",
  "serde",
  "transpose",
-]
-
-[[package]]
-name = "imgdup"
-version = "0.1.0"
-dependencies = [
- "base64",
- "clap",
- "color-eyre",
- "derivative",
- "ffmpeg-next",
- "ffmpeg-sys-next",
- "humantime",
- "image",
- "image_hasher",
- "libc",
- "log",
- "memmap2",
- "paste",
- "plotters",
- "rand",
- "rayon",
- "replace_with",
- "rkyv",
- "signal-hook",
- "simplelog",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -1849,6 +1845,24 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "videodup"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "common-libs",
+ "ffmpeg-next",
+ "ffmpeg-sys-next",
+ "humantime",
+ "image",
+ "libc",
+ "log",
+ "rand",
+ "rayon",
+ "rkyv",
+]
 
 [[package]]
 name = "walkdir"

@@ -7,23 +7,24 @@ default:
 bin_dir := env('HOME') / '.bin'
 install_dir := justfile_directory() / 'install'
 runner := 'imgdup-runner.sh'
-targets := 'imgdup imgdup-debug imgdup-edit'
+videotargets := 'videodup videodup-debug videodup-edit'
+targets := videotargets
 
 # Install the rust binaries
 install:
     #TODO: find a better way to prepend stuff to a list
-    cargo install --path . --locked $(printf -- '--bin %s ' {{targets}})
+    cargo install --path videodup --locked $(printf -- '--bin %s ' {{videotargets}})
 
 # Install the wrappers and rust binaries
 install-wrapper: install
     install '{{runner}}' '{{install_dir}}'
     sed -i 's|ROOT=$PWD|ROOT="{{justfile_directory()}}"|' '{{install_dir / runner}}'
-    for t in {{targets}}; do ln -sf '{{install_dir / runner}}' '{{bin_dir}}/'"$t"; done
+    for t in {{targets}}; do ln -vsf '{{install_dir / runner}}' '{{bin_dir}}/'"$t"; done
 
-# Uninstall the wrappers (does not do a cargo uninstall)
+# Uninstall the wrappers
 uninstall-wrapper:
     #TODO: find a better way to prepend stuff to a list
-    rm -f '{{install_dir / runner}}' $(printf -- '{{bin_dir}}/%s ' {{targets}})
+    rm -vrf '{{install_dir}}' $(printf -- '{{bin_dir}}/%s ' {{targets}})
 
 # Builds and runs a bin using the wrapper to make sure the correct shared libraries are
 # used.

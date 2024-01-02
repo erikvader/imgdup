@@ -7,7 +7,7 @@ use std::{
 };
 
 use clap::Parser;
-use imgdup::{
+use common_libs::{
     bin_common::args::remove_borders::{RemoveBordersArgs, RemoveBordersCli},
     imghash::{
         hamming::{Distance, Hamming},

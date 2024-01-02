@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
+use common_libs::bin_common::args::remove_borders::RemoveBordersCli;
 use image::{imageops::grayscale, DynamicImage, GenericImageView};
-use imgdup::bin_common::args::remove_borders::RemoveBordersCli;
 
 #[derive(Parser)]
 #[command()]

@@ -10,8 +10,7 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use common::Payload;
-use image::RgbImage;
-use imgdup::{
+use common_libs::{
     bin_common::{
         args::{
             preproc::{PreprocArgs, PreprocCli, PreprocError},
@@ -21,11 +20,7 @@ use imgdup::{
         init::{init_eyre, init_logger},
         termination,
     },
-    bktree::{
-        bktree::BKTree,
-        source_types::video_source::{Mirror, VidSrc},
-    },
-    frame_extractor::{frame_extractor::FrameExtractor, timestamp::Timestamp},
+    bktree::bktree::BKTree,
     imghash::hamming::Hamming,
     utils::{
         fsutils::{self, all_files, read_optional_file},
@@ -36,7 +31,12 @@ use imgdup::{
         workers::{scoped_workers, FinishedWorker},
     },
 };
+use image::RgbImage;
 use rayon::prelude::*;
+use videodup::{
+    frame_extractor::{FrameExtractor, Timestamp},
+    video_source::{Mirror, VidSrc},
+};
 
 #[derive(Parser, Debug)]
 #[command()]

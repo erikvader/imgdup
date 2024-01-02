@@ -1,0 +1,20 @@
+[package]
+name = "videodup"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common-libs = {path="../common-libs"}
+
+rayon.workspace = true
+color-eyre.workspace = true
+rkyv.workspace = true
+image.workspace = true
+log.workspace = true
+humantime.workspace = true
+clap.workspace = true
+rand.workspace = true
+
+ffmpeg-next.workspace = true
+ffmpeg-sys-next.workspace = true
+libc.workspace = true

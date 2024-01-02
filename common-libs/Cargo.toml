@@ -1,0 +1,32 @@
+[package]
+name = "common-libs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror.workspace = true
+color-eyre = {workspace = true, default-features = false}
+log.workspace = true
+simplelog.workspace = true
+
+plotters.workspace = true
+
+signal-hook = {workspace = true, default_features = false}
+
+image_hasher.workspace = true
+image.workspace = true
+
+clap = {workspace = true, features = ["derive"] }
+humantime.workspace = true
+rand = {workspace = true, features = ["small_rng"]}
+paste.workspace = true
+
+rkyv = {workspace = true, features=["validation", "size_64", "std"], default_features=false}
+memmap2.workspace = true
+replace_with.workspace = true
+derivative.workspace = true
+
+base64.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

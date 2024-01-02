@@ -2,10 +2,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre;
-use imgdup::{
-    bin_common::init::{init_eyre, init_logger},
-    frame_extractor::frame_extractor::FrameExtractor,
-};
+use common_libs::bin_common::init::{init_eyre, init_logger};
+use videodup::frame_extractor::frame_extractor::FrameExtractor;
 
 #[derive(Parser)]
 #[command()]

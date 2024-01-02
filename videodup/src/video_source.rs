@@ -1,10 +1,12 @@
-use std::{fmt};
+use std::fmt;
 
 use rkyv::{Archive, Serialize};
 
-use crate::frame_extractor::timestamp::ArchivedTimestamp;
-use crate::utils::simple_path::SimplePath;
-use crate::{frame_extractor::timestamp::Timestamp, utils::simple_path::SimplePathBuf};
+use crate::frame_extractor::timestamp::{ArchivedTimestamp, Timestamp};
+use common_libs::{
+    bktree::source_types::{PartialSource, Source},
+    utils::simple_path::{SimplePath, SimplePathBuf},
+};
 
 #[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq)]
 #[archive(check_bytes)]
@@ -89,10 +91,9 @@ impl ArchivedVidSrc {
     }
 }
 
-impl super::private::Seal for VidSrc {}
-impl super::PartialSource for VidSrc {
+impl PartialSource for VidSrc {
     fn identifier() -> Option<&'static str> {
         Some("video:1")
     }
 }
-impl super::Source for VidSrc {}
+impl Source for VidSrc {}

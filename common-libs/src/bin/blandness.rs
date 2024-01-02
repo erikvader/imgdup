@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use imgdup::bin_common::{args::one_color::OneColorCli, init::init_eyre};
+use common_libs::bin_common::{args::one_color::OneColorCli, init::init_eyre};
 
 #[derive(Parser)]
 #[command()]

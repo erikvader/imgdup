@@ -6,7 +6,6 @@ use rkyv::{Archive, Serialize};
 #[archive(check_bytes)]
 pub struct StringSource(pub String);
 
-impl super::private::Seal for StringSource {}
 impl super::PartialSource for StringSource {
     fn identifier() -> Option<&'static str> {
         Some("string:1")

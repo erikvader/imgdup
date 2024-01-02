@@ -5,8 +5,7 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use image::RgbImage;
-use imgdup::{
+use common_libs::{
     bin_common::{
         args::{
             preproc::{PreprocArgs, PreprocCli},
@@ -14,14 +13,15 @@ use imgdup::{
         },
         init::{init_eyre, init_logger},
     },
-    bktree::{bktree::BKTree, source_types::video_source::VidSrc},
-    frame_extractor::frame_extractor::FrameExtractor,
+    bktree::bktree::BKTree,
     imghash::hamming::Hamming,
     utils::{
         repo::{Entry, Repo},
         simple_path::{SimplePath, SimplePathBuf},
     },
 };
+use image::RgbImage;
+use videodup::{frame_extractor::FrameExtractor, video_source::VidSrc};
 
 #[derive(Parser, Debug)]
 #[command()]

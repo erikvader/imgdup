@@ -6,7 +6,7 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use imgdup::{
+use common_libs::{
     bin_common::args::{
         preproc::{PreprocArgs, PreprocCli},
         similarity::{SimiArgs, SimiCli},
@@ -15,11 +15,9 @@ use imgdup::{
         ignored_hashes::read_ignored,
         init::{init_eyre, init_logger},
     },
-    bktree::{
-        bktree::BKTree,
-        source_types::{any_source::AnySource, video_source::VidSrc},
-    },
+    bktree::{bktree::BKTree, source_types::any_source::AnySource},
 };
+use videodup::video_source::VidSrc;
 
 #[derive(Parser, Debug)]
 #[command()]
@@ -60,6 +58,9 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
     }
 }
 
+// TODO: much of this should be able to be in its own executable, like an imgdup-edit that
+// can ONLY handle AnySource. Should the VidSrc goals from this file be added as some kind
+// of plugin? How to share the goal structure?
 fn main() -> eyre::Result<()> {
     init_eyre()?;
     init_logger(None)?;

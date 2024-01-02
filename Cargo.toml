@@ -1,9 +1,11 @@
-[package]
-name = "imgdup"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+  "common-libs",
+  "videodup",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 # Errors and logs
 thiserror = "1"
 color-eyre = {version = "0.6", default-features = false}
@@ -14,9 +16,10 @@ simplelog = "0.12"
 # TODO: reduce features
 plotters = "0.3"
 
-# For imgdup
+# For all bins
 rayon = "1.8"
 signal-hook = {version = "0.3", default_features = false}
+rand = {version = "0.8", features = ["small_rng"]}
 
 # For video processing
 ffmpeg-next = "=6.0" # NOTE: does not follow semver
@@ -31,16 +34,15 @@ image = "0.24"
 # For CLI flags
 clap = { version = "4.3", features = ["derive"] }
 humantime = "2.1"
-rand = {version = "0.8", features = ["small_rng"]}
 paste = "1.0"
 
-# For file_array
+# For bktree
 rkyv = {version="0.7", features=["validation", "size_64", "std"], default_features=false}
 memmap2 = "0.7"
 replace_with = "0.1"
 derivative = "2.2"
 
-[dev-dependencies]
+# For testing in bktree
 tempfile = "3"
 
 [profile.dev.build-override]
