@@ -34,7 +34,7 @@ struct Cli {
     preproc_args: PreprocCli,
 
     /// Path to the database to use
-    #[arg(long, short = 'd', default_value = "../../imgdup.db")]
+    #[arg(long, short = 'd', default_value = "../../videodup.db")]
     database_file: PathBuf,
 
     /// The file to compare against all other

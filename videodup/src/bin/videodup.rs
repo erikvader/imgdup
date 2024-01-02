@@ -79,12 +79,12 @@ struct Cli {
     src_dirs: Vec<SimplePathBuf>,
 
     /// Path to the database to use
-    #[arg(long, short = 'f', default_value = "./imgdup.db")]
+    #[arg(long, short = 'f', default_value = "./videodup.db")]
     database_file: PathBuf,
 }
 
 fn cli_arguments() -> eyre::Result<Cli> {
-    const ARGS_FILE: &str = ".imgduprc";
+    const ARGS_FILE: &str = ".videoduprc";
     let mut args: Vec<OsString> = std::env::args_os().collect();
 
     if args.len() == 1 {
