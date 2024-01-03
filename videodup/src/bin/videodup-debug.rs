@@ -15,13 +15,16 @@ use imgdup_common::{
         init::{init_eyre, init_logger},
     },
     bktree::bktree::BKTree,
-    imghash::hamming::Hamming,
     utils::{
         repo::{Entry, Repo},
-        simple_path::{SimplePath, SimplePathBuf},
+        simple_path::SimplePath,
     },
 };
-use videodup::{frame_extractor::FrameExtractor, video_source::VidSrc};
+use videodup::{
+    debug_info::{self, Collision, Frame, DEBUG_INFO_FILENAME},
+    frame_extractor::FrameExtractor,
+    video_source::VidSrc,
+};
 
 #[derive(Parser, Debug)]
 #[command()]
@@ -33,13 +36,9 @@ struct Cli {
     #[command(flatten)]
     preproc_args: PreprocCli,
 
-    /// Path to the database to use
-    #[arg(long, short = 'd', default_value = "../../videodup.db")]
-    database_file: PathBuf,
-
-    /// The file to compare against all other
-    #[arg(long, short = 'r', default_value = "0000_the_new_one")]
-    reference_filename: PathBuf,
+    /// Path to the root, where all relative paths originate
+    #[arg(long, short = 'd', default_value = "../../")]
+    root: PathBuf,
 
     /// The repo entry directory to debug, or the repo itself if the flag `all` is given.
     #[arg(long, short = 'e', default_value = ".")]
@@ -52,17 +51,6 @@ struct Cli {
     /// Maximum number of collisions to write
     #[arg(long, default_value_t = 100)]
     max_collisions: usize,
-}
-
-#[derive(Clone)]
-struct Frame {
-    hash: Hamming,
-    vidsrc: VidSrc,
-}
-
-struct Collision {
-    reference: Frame,
-    other: Frame,
 }
 
 struct PreprocImage {
@@ -78,21 +66,7 @@ fn main() -> eyre::Result<()> {
     let simi_args = cli.simi_args.to_args();
     let preproc_args = cli.preproc_args.to_args();
 
-    let root = cli
-        .database_file
-        .parent()
-        .ok_or_else(|| eyre::eyre!("database file path doesn't have a parent path"))?;
-
-    eyre::ensure!(
-        cli.database_file.is_file(),
-        "The database file does not exist"
-    );
-    let tree = BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
-        format!(
-            "Failed to open database at: {}",
-            cli.database_file.display()
-        )
-    })?;
+    let root = cli.root;
 
     let entries = if cli.all {
         let repo = Repo::new(&cli.entry_dir)
@@ -109,8 +83,6 @@ fn main() -> eyre::Result<()> {
             cli.max_collisions,
             &simi_args,
             &preproc_args,
-            &cli.reference_filename,
-            &tree,
             &root,
             repo_entry,
         )?;
@@ -123,42 +95,18 @@ fn execute_on_entry(
     max_collisions: usize,
     simi_args: &SimiArgs,
     preproc_args: &PreprocArgs,
-    reference_filename: &Path,
-    tree: &BKTree<VidSrc>,
     root: &Path,
     mut repo_entry: Entry,
 ) -> eyre::Result<()> {
     log::info!("Creating debug info at: {}", repo_entry.path().display());
 
-    let ref_path: SimplePathBuf = {
-        let ref_file = repo_entry.path().join(reference_filename);
-        let link = std::fs::read_link(&ref_file).wrap_err_with(|| {
-            format!(
-                "failed to read the reference file at {}",
-                ref_file.display()
-            )
-        })?;
-        SimplePathBuf::unresolve(link)
-            .wrap_err("the link at the reference file is not simple")?
-    };
-    log::debug!("The full path to the reference is '{ref_path}'");
-
-    log::info!("Extracting data for the reference file in the database...");
-    let ref_frames: Vec<Frame> = extract_frames(&tree, &ref_path)?;
-    eyre::ensure!(
-        !ref_frames.is_empty(),
-        "Could not find the reference file in the database"
-    );
-    log::info!("Done! Found {} frames", ref_frames.len());
-
-    log::info!("Finding all collisions in the database...");
-    let mut collisions: Vec<Collision> =
-        find_collisions(&ref_frames, &ref_path, &tree, &simi_args)?;
-    eyre::ensure!(
-        !collisions.is_empty(),
-        "Did not find any collisions in the database"
-    );
-    log::info!("Done! Found {} collisions", collisions.len());
+    log::info!("Reading debug info file...");
+    let mut collisions = repo_entry
+        .read_file(DEBUG_INFO_FILENAME, |buf| debug_info::read_from(buf))
+        .wrap_err("failed to read the debug info file")?
+        .collisions;
+    eyre::ensure!(!collisions.is_empty(), "The debug info file was empty");
+    log::info!("Done! It had {} collisions", collisions.len());
 
     if collisions.len() > max_collisions {
         log::warn!("Got more than {max_collisions} collisions, will truncate");

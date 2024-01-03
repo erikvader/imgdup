@@ -47,6 +47,8 @@ pub struct DeferredBox {
 impl DeferredBox {
     pub fn new<B, T>(data: B) -> Result<Self>
     where
+        // NOTE: AsRef would be nicer, but:
+        // https://doc.rust-lang.org/std/convert/trait.AsRef.html#reflexivity
         B: Borrow<T>,
         T: Serialize<DeferredBoxSerializer>,
     {

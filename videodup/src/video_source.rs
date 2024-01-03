@@ -8,7 +8,7 @@ use imgdup_common::{
     utils::simple_path::{SimplePath, SimplePathBuf},
 };
 
-#[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq)]
+#[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[archive(check_bytes)]
 pub struct VidSrc {
     frame_pos: Timestamp,
@@ -16,7 +16,7 @@ pub struct VidSrc {
     mirrored: Mirror,
 }
 
-#[derive(Serialize, Archive, Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Serialize, Archive, Copy, Clone, Hash, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[archive(check_bytes)]
 pub enum Mirror {
     Normal,

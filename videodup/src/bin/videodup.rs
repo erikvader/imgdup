@@ -34,6 +34,7 @@ use imgdup_common::{
 };
 use rayon::prelude::*;
 use videodup::{
+    debug_info::{self, Collision, Collisions, Frame, DEBUG_INFO_FILENAME},
     frame_extractor::{FrameExtractor, Timestamp},
     video_source::{Mirror, VidSrc},
 };
@@ -236,6 +237,7 @@ mod common {
 
     #[derive(Debug)]
     pub struct Payload<'env> {
+        // TODO: use debug_info::Frame instead
         pub video_path: &'env SimplePath,
         pub hashes: Vec<(Timestamp, Hamming, Mirror)>,
     }
@@ -400,7 +402,9 @@ mod video {
                 F::TooOneColor | F::TooSimilarToPrevious | F::Ignored | F::Empty => (),
             }
 
-            // TODO: add some randomness to the step?
+            // TODO: Have a separate "train" of frames to extract, but those should not be
+            // saved, and should not care about "toosimilartoprevious". Call then phantom
+            // frames or something.
             extractor.seek_forward(step).wrap_err("Failed to seek")?;
         }
 
@@ -525,7 +529,6 @@ mod video {
 }
 
 mod tree {
-
     use super::*;
 
     #[derive(Clone, Copy)]
@@ -549,12 +552,13 @@ mod tree {
             }
 
             log::info!("Finding dups of: {}", video_path);
-            let similar_videos = find_similar_videos(ctx, &hashes, &mut tree)
+            let collisions = find_similar_videos(ctx, video_path, &hashes, &tree)
                 .wrap_err("failed to find similar videos")?;
+            let similar_videos = collisions.all_others();
             log::info!("Found {} duplicate videos", similar_videos.len());
 
             if !similar_videos.is_empty() {
-                link_dup(&mut repo, video_path, similar_videos)
+                link_dup(&mut repo, video_path, similar_videos, &collisions)
                     .wrap_err("failed to link dup")?;
             }
 
@@ -581,6 +585,7 @@ mod tree {
         tree.add_all(
             hashes
                 .into_iter()
+                // TODO: remember to remove this when the Stepper is created
                 .filter(|(_, _, mirrored)| *mirrored == Mirror::Normal)
                 .map(|(ts, hash, mirrored)| {
                     (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
@@ -594,6 +599,7 @@ mod tree {
         repo: &mut Repo,
         video_path: &SimplePath,
         similar_videos: HashSet<&SimplePath>,
+        collisions: &Collisions,
     ) -> eyre::Result<()> {
         let mut entry = repo
             .new_entry()
@@ -609,27 +615,51 @@ mod tree {
                 .wrap_err("failed to link a dup")?;
         }
 
+        entry
+            .create_file(DEBUG_INFO_FILENAME, |writer| {
+                debug_info::save_to(writer, collisions)
+            })
+            .wrap_err("failed to write debug info")?;
+
         Ok(())
     }
 
     fn find_similar_videos<'env>(
         ctx: Ctx<'env>,
+        frames_path: &SimplePath,
         frames: &[(Timestamp, Hamming, Mirror)],
-        tree: &'env mut BKTree<VidSrc>,
-    ) -> eyre::Result<HashSet<&'env SimplePath>> {
+        tree: &'env BKTree<VidSrc>,
+    ) -> eyre::Result<Collisions> {
         let sims: eyre::Result<Vec<Vec<_>>> = frames
             .par_iter()
-            .map(|(_, hash, _)| hash)
-            .map(|hash| -> eyre::Result<Vec<_>> {
+            .map(|(ts, hash, mirror)| -> eyre::Result<Vec<_>> {
+                let ref_frame = Frame {
+                    hash: *hash,
+                    vidsrc: VidSrc::new(ts.clone(), frames_path.to_owned(), *mirror),
+                };
+
                 let mut res = Vec::new();
-                tree.find_within(*hash, ctx.simi_args.threshold(), |_, src| {
-                    res.push(src.path());
-                })?;
+                tree.find_within(
+                    *hash,
+                    ctx.simi_args.threshold(),
+                    |other_hash, other_src| {
+                        let other_frame = Frame {
+                            hash: other_hash,
+                            vidsrc: other_src.deserialize(),
+                        };
+                        res.push(Collision {
+                            reference: ref_frame.clone(),
+                            other: other_frame,
+                        })
+                    },
+                )?;
                 Ok(res)
             })
             .collect();
 
         let sims = sims.wrap_err("failed to find similar videos")?;
-        Ok(sims.into_iter().flatten().collect())
+        Ok(Collisions {
+            collisions: sims.into_iter().flatten().collect(),
+        })
     }
 }

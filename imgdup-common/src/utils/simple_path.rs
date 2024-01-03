@@ -17,7 +17,19 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Serialize, Archive, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(
+    Debug,
+    Serialize,
+    Archive,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[archive(check_bytes)]
 /// A path that: is relative, is UTF-8 and only contains slashes and filenames
 pub struct SimplePathBuf {

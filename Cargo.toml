@@ -20,7 +20,6 @@ plotters = "0.3"
 # For all bins
 rayon = "1.8"
 signal-hook = {version = "0.3", default_features = false}
-rand = {version = "0.8", features = ["small_rng"]}
 
 # For video processing
 ffmpeg-next = "=6.0" # NOTE: does not follow semver
@@ -46,8 +45,13 @@ derivative = "2.2"
 # For cbz
 zip = "0.6"
 
-# For testing in bktree
+# Videodup debug info
+ron = {version="0.8", features = ["integer128"]}
+serde = {version="1.0", features = ["derive"]}
+
+# For testing
 tempfile = "3"
+rand = {version = "0.8", features = ["small_rng"]}
 
 [profile.dev.build-override]
 opt-level = 3

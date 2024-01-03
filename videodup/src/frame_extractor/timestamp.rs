@@ -5,7 +5,17 @@ use rkyv::{Archive, Serialize};
 
 extern crate ffmpeg_next as ffmpeg;
 
-#[derive(Serialize, Archive, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(
+    Serialize,
+    Archive,
+    Clone,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[archive(check_bytes)]
 pub struct Timestamp {
     pub(super) timebase_numerator: i32,

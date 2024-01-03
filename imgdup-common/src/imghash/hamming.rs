@@ -14,6 +14,8 @@ pub type Container = u128;
     Ord,
     PartialOrd,
     CheckBytes,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 #[repr(transparent)]
 pub struct Hamming(pub Container);

@@ -1,7 +1,7 @@
 use std::{
     ffi::OsString,
     fs::{self, File},
-    io::{BufWriter, Write},
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -107,13 +107,14 @@ impl Entry {
         })
     }
 
-    pub fn create_file<F>(
+    pub fn create_file<F, E>(
         &mut self,
         name: impl AsRef<Path>,
         writer: F,
     ) -> eyre::Result<()>
     where
-        F: FnOnce(&mut BufWriter<File>) -> eyre::Result<()>,
+        F: FnOnce(&mut BufWriter<File>) -> std::result::Result<(), E>,
+        std::result::Result<(), E>: eyre::WrapErr<(), E>,
     {
         let name = name.as_ref();
         // TODO: should probably be an eyre::ensure?
@@ -129,6 +130,65 @@ impl Entry {
         writer(&mut buf).wrap_err("the writer failed")?;
         buf.flush().wrap_err("failed to flush")?;
         Ok(())
+    }
+
+    /// Open the some file with name `name` and apply the fallible function on it which
+    /// should interpret the data to something
+    pub fn read_file<R, T, E>(&self, name: impl AsRef<Path>, reader: R) -> eyre::Result<T>
+    where
+        R: FnOnce(&mut BufReader<File>) -> std::result::Result<T, E>,
+        std::result::Result<T, E>: eyre::WrapErr<T, E>,
+    {
+        let name = name.as_ref();
+        assert!(fsutils::is_basename(name));
+
+        // TODO: extract function
+        let target_file = {
+            // TODO: I don't like that this must be UTF-8, but its not possible, or at least
+            // really annoying, to do string operations on `Path` :( Probably use
+            // https://doc.rust-lang.org/std/os/unix/ffi/trait.OsStrExt.html#tymethod.as_bytes
+            // and do substring searches and stuff on byte slices.
+            let name = name.to_str().expect("should be UTF-8");
+
+            let all_files: Vec<_> =
+                fsutils::all_files([&self.path]).wrap_err("failed to list myself")?;
+
+            let mut target_file = None;
+            for file in all_files {
+                let filename = file
+                    .file_name()
+                    .expect("will contain a filename")
+                    .to_str()
+                    .ok_or_else(|| eyre::eyre!("path name is not UTF-8: {:?}", file))?;
+
+                if filename.ends_with(name)
+                    && filename.len() >= ENTRY_PADDING + 1
+                    && filename[..ENTRY_PADDING]
+                        .chars()
+                        .all(|c| c.is_ascii_digit())
+                    && &filename[ENTRY_PADDING..ENTRY_PADDING + 1] == "_"
+                {
+                    target_file = Some(file);
+                    break;
+                }
+            }
+            target_file
+        };
+
+        let Some(target_file) = target_file else {
+            eyre::bail!(
+                "Could not find a file with name {name:?} in entry {:?}",
+                self.path
+            )
+        };
+
+        let mut buf = BufReader::new(
+            File::open(target_file)
+                .wrap_err_with(|| "failed to open {target_file:?} for reading")?,
+        );
+        let t = reader(&mut buf)
+            .wrap_err_with(|| "failed to read the contents of {target_file:?}")?;
+        Ok(t)
     }
 
     /// `target` is relative CWD, or absolute
