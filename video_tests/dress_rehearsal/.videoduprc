@@ -1,6 +1,6 @@
 --dup-dir _DUPS_
 --src-dirs _BUFFER_ _BUFFER_1
---database-file imgdup.db
+--database-file videodup.db
 --ignore-dir _IMGDUP_IGNORE_
 --graveyard-dir _GRAVEYARD_
 --video-threads 6

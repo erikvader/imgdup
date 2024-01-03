@@ -48,6 +48,10 @@ struct Cli {
     /// Debug all entries instead of just the current one
     #[arg(long, short = 'A', default_value_t = false)]
     all: bool,
+
+    /// Maximum number of collisions to write
+    #[arg(long, default_value_t = 100)]
+    max_collisions: usize,
 }
 
 #[derive(Clone)]
@@ -79,6 +83,10 @@ fn main() -> eyre::Result<()> {
         .parent()
         .ok_or_else(|| eyre::eyre!("database file path doesn't have a parent path"))?;
 
+    eyre::ensure!(
+        cli.database_file.is_file(),
+        "The database file does not exist"
+    );
     let tree = BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
         format!(
             "Failed to open database at: {}",
@@ -98,6 +106,7 @@ fn main() -> eyre::Result<()> {
 
     for repo_entry in entries {
         execute_on_entry(
+            cli.max_collisions,
             &simi_args,
             &preproc_args,
             &cli.reference_filename,
@@ -111,6 +120,7 @@ fn main() -> eyre::Result<()> {
 }
 
 fn execute_on_entry(
+    max_collisions: usize,
     simi_args: &SimiArgs,
     preproc_args: &PreprocArgs,
     reference_filename: &Path,
@@ -131,22 +141,33 @@ fn execute_on_entry(
         SimplePathBuf::unresolve(link)
             .wrap_err("the link at the reference file is not simple")?
     };
+    log::debug!("The full path to the reference is '{ref_path}'");
 
-    log::info!("Extracting frames for the reference video...");
+    log::info!("Extracting data for the reference file in the database...");
     let ref_frames: Vec<Frame> = extract_frames(&tree, &ref_path)?;
-    log::info!("Done!");
-
-    log::info!("Finding the collisions for all reference frames...");
-    let collisions: Vec<Collision> =
-        find_collisions(&ref_frames, &ref_path, &tree, &simi_args)?;
-    log::info!("Done!");
-
-    log::info!(
-        "Extracting the frames for all {} collisions...",
-        collisions.len()
+    eyre::ensure!(
+        !ref_frames.is_empty(),
+        "Could not find the reference file in the database"
     );
+    log::info!("Done! Found {} frames", ref_frames.len());
+
+    log::info!("Finding all collisions in the database...");
+    let mut collisions: Vec<Collision> =
+        find_collisions(&ref_frames, &ref_path, &tree, &simi_args)?;
+    eyre::ensure!(
+        !collisions.is_empty(),
+        "Did not find any collisions in the database"
+    );
+    log::info!("Done! Found {} collisions", collisions.len());
+
+    if collisions.len() > max_collisions {
+        log::warn!("Got more than {max_collisions} collisions, will truncate");
+        collisions.truncate(max_collisions);
+    }
+
+    log::info!("Extracting the frames for all collisions from the video files...",);
     let images: HashMap<VidSrc, RgbImage> = read_images_from_videos(&collisions, root)?;
-    log::info!("Done!");
+    log::info!("Done! Got {} images", images.len());
 
     log::info!("Preprocessing all images...");
     let images: HashMap<VidSrc, PreprocImage> = preproc_images(images, &preproc_args);
@@ -166,7 +187,6 @@ fn save_collisions(
     images: HashMap<VidSrc, PreprocImage>,
     simi_args: &SimiArgs,
 ) -> eyre::Result<()> {
-    // TODO: set an upper bound on how many subfolders that can be created
     for Collision { other, reference } in collisions {
         let mut entry = repo_entry
             .sub_entry("collision")
