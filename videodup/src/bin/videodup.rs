@@ -9,7 +9,7 @@ use std::{
 
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use common::Payload;
+use common::{Frame, Payload};
 use image::RgbImage;
 use imgdup_common::{
     bin_common::{
@@ -28,13 +28,14 @@ use imgdup_common::{
         imgutils, math,
         repo::{LazyEntry, Repo},
         simple_path::{clap_simple_relative_parser, SimplePath, SimplePathBuf},
+        time::{Every, Stepper},
         work_queue::WorkQueue,
         workers::{scoped_workers, FinishedWorker},
     },
 };
 use rayon::prelude::*;
 use videodup::{
-    debug_info::{self, Collision, Collisions, Frame, DEBUG_INFO_FILENAME},
+    debug_info::{self, Collision, Collisions, DEBUG_INFO_FILENAME},
     frame_extractor::{FrameExtractor, Timestamp},
     video_source::{Mirror, VidSrc},
 };
@@ -236,13 +237,27 @@ mod common {
     use super::*;
 
     #[derive(Debug)]
+    pub struct Frame {
+        pub ts: Timestamp,
+        pub hash: Hamming,
+        pub mirror: Mirror,
+        pub phantom: bool,
+    }
+
+    impl Frame {
+        pub fn should_be_stored(&self) -> bool {
+            self.mirror == Mirror::Normal && !self.phantom
+        }
+    }
+
+    #[derive(Debug)]
     pub struct Payload<'env> {
-        // TODO: use debug_info::Frame instead
         pub video_path: &'env SimplePath,
-        pub hashes: Vec<(Timestamp, Hamming, Mirror)>,
+        pub hashes: Vec<Frame>,
     }
 }
 
+// TODO: put these modules into their own files
 mod video {
     use super::*;
 
@@ -271,7 +286,13 @@ mod video {
             }
 
             log::info!("Progress: {}/{} videos", i + 1, ctx.new_files.len());
-            let hashes = match get_hashes(ctx, vid_path) {
+
+            let before = Instant::now();
+            let hashes_res = get_hashes(ctx, vid_path);
+            let elapsed = humantime::Duration::from(before.elapsed());
+            log::info!("It took {} to get the hashes from {}", elapsed, vid_path);
+
+            let hashes = match hashes_res {
                 Ok(ok) => ok,
                 Err(e) => {
                     log::error!("Failed to get the hashes from '{}': {:?}", vid_path, e);
@@ -308,7 +329,7 @@ mod video {
     fn get_hashes<'env>(
         ctx: Ctx<'env>,
         video: &'env SimplePath,
-    ) -> eyre::Result<Vec<(Timestamp, Hamming, Mirror)>> {
+    ) -> eyre::Result<Vec<Frame>> {
         log::info!("Retrieving hashes for: {}", video);
 
         let mut extractor = FrameExtractor::new(video.as_path())
@@ -323,11 +344,13 @@ mod video {
         let min_frames: NonZeroU32 = NonZeroU32::new(5).unwrap();
         let max_step: Duration = Duration::from_secs(10);
         let log_every = Duration::from_secs(10);
+        let phantom_steps = vec![Duration::from_millis(4200)];
 
         let step = calc_step(approx_len, min_frames, max_step);
 
         let mut graveyard_entry = LazyEntry::new();
-        let mut hashes = Vec::with_capacity(estimated_num_of_frames(approx_len, step));
+        let mut hashes: Vec<Frame> =
+            Vec::with_capacity(estimated_num_of_frames(approx_len, step));
 
         // TODO: a flag to skip doing this? For tests maybe?
         let (video_skip, video_skip_end): (Duration, Duration) = skip_beg_end(approx_len);
@@ -353,7 +376,13 @@ mod video {
 
         let approx_len = Timestamp::from_duration(approx_len).to_string();
 
-        let mut last_logged = Instant::now();
+        let mut log_every = Every::new(log_every);
+        let mut stepper = Stepper::new({
+            let mut steps = vec![step];
+            steps.extend(phantom_steps);
+            steps
+        });
+        let mut is_phantom = false;
         while let Some((ts, frame)) =
             extractor.next().wrap_err("Failed to get a frame")?
         {
@@ -363,23 +392,31 @@ mod video {
                 }
             }
 
-            let now = Instant::now();
-            if now - last_logged >= log_every {
-                last_logged = now;
-                log::debug!("At timestamp: {}/{}", ts.to_string(), approx_len);
-            }
+            log_every.perform(|| {
+                log::debug!("At timestamp: {}/{}", ts.to_string(), approx_len)
+            });
 
             use FrameToHashResult as F;
-            match frame_to_hash(ctx, &frame, hashes.last().map(|(_, h, _)| *h)) {
+            match frame_to_hash(ctx, &frame, hashes.last().map(|frame| frame.hash)) {
                 F::Ok(hash) => {
-                    hashes.push((ts.clone(), hash, Mirror::Normal));
-                    let mirror = imgutils::mirror(frame);
-                    match frame_to_hash(ctx, &mirror, Some(hash)) {
-                        F::Ok(hash) => {
-                            hashes.push((ts, hash, Mirror::Mirrored));
-                        }
-                        e => {
-                            log::warn!("Hashing the mirrored frame didn't work: {e:?}");
+                    hashes.push(Frame {
+                        ts: ts.clone(),
+                        hash,
+                        mirror: Mirror::Normal,
+                        phantom: is_phantom,
+                    });
+                    if !is_phantom {
+                        let mirror = imgutils::mirror(frame);
+                        match frame_to_hash(ctx, &mirror, Some(hash)) {
+                            F::Ok(hash) => {
+                                hashes.push(Frame {
+                                    ts,
+                                    hash,
+                                    mirror: Mirror::Mirrored,
+                                    phantom: is_phantom,
+                                });
+                            }
+                            _ => (), // TODO: save in graveyard?
                         }
                     }
                 }
@@ -402,10 +439,9 @@ mod video {
                 F::TooOneColor | F::TooSimilarToPrevious | F::Ignored | F::Empty => (),
             }
 
-            // TODO: Have a separate "train" of frames to extract, but those should not be
-            // saved, and should not care about "toosimilartoprevious". Call then phantom
-            // frames or something.
+            let (series, step) = stepper.step_non_zero();
             extractor.seek_forward(step).wrap_err("Failed to seek")?;
+            is_phantom = series != 0;
         }
 
         log::info!("Got {} hashes from: {}", hashes.len(), video);
@@ -551,18 +587,27 @@ mod tree {
                 break;
             }
 
-            log::info!("Finding dups of: {}", video_path);
+            log::info!(
+                "Finding dups of '{}', which has {} hashes",
+                video_path,
+                hashes.len()
+            );
             let collisions = find_similar_videos(ctx, video_path, &hashes, &tree)
                 .wrap_err("failed to find similar videos")?;
             let similar_videos = collisions.all_others();
             log::info!("Found {} duplicate videos", similar_videos.len());
 
             if !similar_videos.is_empty() {
+                log::info!("Creating the dup dir");
                 link_dup(&mut repo, video_path, similar_videos, &collisions)
                     .wrap_err("failed to link dup")?;
+                log::info!("Done!");
             }
 
-            log::info!("Saving {} hashes", hashes.len());
+            let all_hashes_len = hashes.len();
+            let mut hashes = hashes;
+            hashes.retain(|f| f.should_be_stored());
+            log::info!("Saving {} hashes out of {}", hashes.len(), all_hashes_len);
             save_video(hashes, &mut tree, video_path)
                 .wrap_err("failed to save some video hashes to the tree")?;
             log::info!("Done saving");
@@ -578,19 +623,18 @@ mod tree {
     }
 
     fn save_video(
-        hashes: Vec<(Timestamp, Hamming, Mirror)>,
+        hashes: Vec<Frame>,
         tree: &mut BKTree<VidSrc>,
         video_path: &SimplePath,
     ) -> eyre::Result<()> {
-        tree.add_all(
-            hashes
-                .into_iter()
-                // TODO: remember to remove this when the Stepper is created
-                .filter(|(_, _, mirrored)| *mirrored == Mirror::Normal)
-                .map(|(ts, hash, mirrored)| {
-                    (hash, VidSrc::new(ts, video_path.to_owned(), mirrored))
-                }),
-        )
+        tree.add_all(hashes.into_iter().map(|frame| {
+            assert!(frame.should_be_stored());
+            let Frame {
+                ts, hash, mirror, ..
+            } = frame;
+            // TODO: remove mirror now when only normal orientations are stored
+            (hash, VidSrc::new(ts, video_path.to_owned(), mirror))
+        }))
         .wrap_err("failed to add to the tree")?;
         Ok(())
     }
@@ -627,34 +671,39 @@ mod tree {
     fn find_similar_videos<'env>(
         ctx: Ctx<'env>,
         frames_path: &SimplePath,
-        frames: &[(Timestamp, Hamming, Mirror)],
+        frames: &[Frame],
         tree: &'env BKTree<VidSrc>,
     ) -> eyre::Result<Collisions> {
         let sims: eyre::Result<Vec<Vec<_>>> = frames
             .par_iter()
-            .map(|(ts, hash, mirror)| -> eyre::Result<Vec<_>> {
-                let ref_frame = Frame {
-                    hash: *hash,
-                    vidsrc: VidSrc::new(ts.clone(), frames_path.to_owned(), *mirror),
-                };
+            .map(
+                |Frame {
+                     ts, hash, mirror, ..
+                 }|
+                 -> eyre::Result<Vec<_>> {
+                    let ref_frame = debug_info::Frame {
+                        hash: *hash,
+                        vidsrc: VidSrc::new(ts.clone(), frames_path.to_owned(), *mirror),
+                    };
 
-                let mut res = Vec::new();
-                tree.find_within(
-                    *hash,
-                    ctx.simi_args.threshold(),
-                    |other_hash, other_src| {
-                        let other_frame = Frame {
-                            hash: other_hash,
-                            vidsrc: other_src.deserialize(),
-                        };
-                        res.push(Collision {
-                            reference: ref_frame.clone(),
-                            other: other_frame,
-                        })
-                    },
-                )?;
-                Ok(res)
-            })
+                    let mut res = Vec::new();
+                    tree.find_within(
+                        *hash,
+                        ctx.simi_args.threshold(),
+                        |other_hash, other_src| {
+                            let other_frame = debug_info::Frame {
+                                hash: other_hash,
+                                vidsrc: other_src.deserialize(),
+                            };
+                            res.push(Collision {
+                                reference: ref_frame.clone(),
+                                other: other_frame,
+                            })
+                        },
+                    )?;
+                    Ok(res)
+                },
+            )
             .collect();
 
         let sims = sims.wrap_err("failed to find similar videos")?;
