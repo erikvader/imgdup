@@ -632,7 +632,9 @@ mod tree {
             let Frame {
                 ts, hash, mirror, ..
             } = frame;
-            // TODO: remove mirror now when only normal orientations are stored
+            // TODO: remove mirror now when only normal orientations are stored?
+            // videodup-debug depends on it being there though when it is reading the
+            // debuginfo file.
             (hash, VidSrc::new(ts, video_path.to_owned(), mirror))
         }))
         .wrap_err("failed to add to the tree")?;

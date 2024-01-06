@@ -14,14 +14,10 @@ use imgdup_common::{
         },
         init::{init_eyre, init_logger},
     },
-    bktree::bktree::BKTree,
-    utils::{
-        repo::{Entry, Repo},
-        simple_path::SimplePath,
-    },
+    utils::repo::{Entry, Repo},
 };
 use videodup::{
-    debug_info::{self, Collision, Frame, DEBUG_INFO_FILENAME},
+    debug_info::{self, Collision, DEBUG_INFO_FILENAME},
     frame_extractor::FrameExtractor,
     video_source::VidSrc,
 };
@@ -231,49 +227,6 @@ fn read_images_from_videos(
         }
     }
     Ok(images)
-}
-
-fn find_collisions(
-    ref_frames: &[Frame],
-    ref_path: &SimplePath,
-    tree: &BKTree<VidSrc>,
-    simi_args: &SimiArgs,
-) -> eyre::Result<Vec<Collision>> {
-    let mut collisions = Vec::new();
-    for ref_frame in ref_frames {
-        tree.find_within(
-            ref_frame.hash,
-            simi_args.threshold(),
-            |other_hash, other_vidsrc| {
-                if ref_path != other_vidsrc.path() {
-                    collisions.push(Collision {
-                        reference: ref_frame.clone(),
-                        other: Frame {
-                            vidsrc: other_vidsrc.deserialize(),
-                            hash: other_hash,
-                        },
-                    })
-                }
-            },
-        )?;
-    }
-    Ok(collisions)
-}
-
-fn extract_frames(
-    tree: &BKTree<VidSrc>,
-    ref_path: &SimplePath,
-) -> eyre::Result<Vec<Frame>> {
-    let mut ref_frames = Vec::new();
-    tree.for_each(|hash, vidsrc| {
-        if vidsrc.path() == ref_path {
-            ref_frames.push(Frame {
-                vidsrc: vidsrc.deserialize(),
-                hash,
-            });
-        }
-    })?;
-    Ok(ref_frames)
 }
 
 fn preproc_images(
