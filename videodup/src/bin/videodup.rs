@@ -52,6 +52,9 @@ struct Cli {
     #[command(flatten)]
     preproc_args: PreprocCli,
 
+    #[command(flatten)]
+    get_hashes_args: video::GetHashesCli,
+
     /// Use this many threads to read video files
     #[arg(long, short = 'j', default_value = "1")]
     video_threads: NonZeroU32,
@@ -161,6 +164,7 @@ fn main() -> eyre::Result<()> {
     let video_threads: usize = cli.video_threads.get().try_into().expect("should fit");
     let preproc_args = cli.preproc_args.to_args();
     let simi_args = cli.simi_args.to_args();
+    let get_hashes_args = cli.get_hashes_args.to_args();
 
     let ignored_hashes = if let Some(ignore_dir) = cli.ignore_dir {
         log::info!("Reading images to ignore from: {}", ignore_dir.display());
@@ -192,6 +196,7 @@ fn main() -> eyre::Result<()> {
         let video_ctx = video::Ctx {
             preproc_args: &preproc_args,
             simi_args: &simi_args,
+            get_hashes_args: &get_hashes_args,
             ignored_hashes: &ignored_hashes,
             new_files: &new_files,
             repo_grave: repo_grave.as_ref(),
@@ -261,10 +266,34 @@ mod common {
 mod video {
     use super::*;
 
+    // NOTE: since humantime couldn't provide this itself...
+    fn humantime_millis(millis: u64) -> humantime::Duration {
+        Duration::from_millis(millis).into()
+    }
+
+    imgdup_common::args! {
+        GetHashes {
+            "Minimum amount of frames to be extracted, regardless of video length"
+            min_frames: NonZeroU32 = NonZeroU32::new(5).unwrap();
+
+            "Time between frames that will be saved in the database. Can be shorter if \
+             needed to meet min_frames"
+            keyframe_step: humantime::Duration = Duration::from_secs(10).into();
+
+            "Time between progress logs"
+            progress_log_every: humantime::Duration = Duration::from_secs(10).into();
+
+            [] "Time between frames that will only be used for searching. Each step will \
+                be independent"
+            phantom_steps: Vec<humantime::Duration> = [humantime_millis(4200)];
+        }
+    }
+
     #[derive(Clone, Copy)]
     pub struct Ctx<'env> {
         pub preproc_args: &'env PreprocArgs,
         pub simi_args: &'env SimiArgs,
+        pub get_hashes_args: &'env GetHashesArgs,
         pub ignored_hashes: &'env Ignored,
         pub new_files: &'env WorkQueue<&'env SimplePath>,
         pub repo_grave: Option<&'env Mutex<Repo>>,
@@ -340,11 +369,15 @@ mod video {
             humantime::Duration::from(approx_len)
         );
 
-        // TODO: move to some config struct and add to Ctx
-        let min_frames: NonZeroU32 = NonZeroU32::new(5).unwrap();
-        let max_step: Duration = Duration::from_secs(10);
-        let log_every = Duration::from_secs(10);
-        let phantom_steps = vec![Duration::from_millis(4200)];
+        let min_frames = ctx.get_hashes_args.min_frames;
+        let max_step = *ctx.get_hashes_args.keyframe_step;
+        let log_every = *ctx.get_hashes_args.progress_log_every;
+        let phantom_steps: Vec<Duration> = ctx
+            .get_hashes_args
+            .phantom_steps
+            .iter()
+            .map(|human| (*human).into())
+            .collect();
 
         let step = calc_step(approx_len, min_frames, max_step);
 

@@ -1,11 +1,23 @@
+#[macro_export]
 macro_rules! args {
-    ($(#$argsmeta:tt)* $name:ident { $($fhelp:literal $fname:ident: $ftype:ty = $fdefault:expr;)* $($mname:ident: $mtype:ty;)* }) => {
-        paste::paste! {
+    ($(#$argsmeta:tt)* $name:ident {
+        $($fhelp:literal $fname:ident: $ftype:ty = $fdefault:expr;)*
+        $([] $vhelp:literal $vname:ident: $vtype:ty = $vdefault:expr;)*
+        $($mname:ident: $mtype:ty;)*
+    }) => {
+        $crate::bin_common::args::args_helper::paste! {
             #[derive(clap::Args, Debug)]
             pub struct [<$name Cli>] {
                 $(
                     #[arg(long, default_value_t = ($fdefault), help = $fhelp)]
                     $fname: $ftype,
+                )*
+
+                // TODO: a nicer way to solve this than to copy paste the other case with
+                // ONE character difference?
+                $(
+                    #[arg(long, default_values_t = ($vdefault), help = $vhelp)]
+                    $vname: $vtype,
                 )*
 
                 $(
@@ -14,10 +26,17 @@ macro_rules! args {
                 )*
             }
 
+            // TODO: why even creating a struct that looks exactly the same? Whats the
+            // difference between XXXCli and XXXArgs? Was there ever even one? Tankevurpa
+            // from the beginning?
             $(#$argsmeta)*
             pub struct [<$name Args>] {
                 $(
                     $fname: $ftype,
+                )*
+
+                $(
+                    $vname: $vtype,
                 )*
 
                 $(
@@ -33,6 +52,10 @@ macro_rules! args {
                         )*
 
                         $(
+                            $vname: $vdefault.into_iter().collect(),
+                        )*
+
+                        $(
                             $mname: [<$mtype Args>]::default(),
                         )*
                     }
@@ -43,6 +66,13 @@ macro_rules! args {
                 $(
                     pub fn $fname(mut self, $fname: $ftype) -> Self {
                         self.$fname = $fname;
+                        self
+                    }
+                )*
+
+                $(
+                    pub fn $vname(mut self, $vname: $vtype) -> Self {
+                        self.$vname = $vname;
                         self
                     }
                 )*
@@ -63,6 +93,10 @@ macro_rules! args {
                         )*
 
                         $(
+                            $vname: self.$vname.clone(),
+                        )*
+
+                        $(
                             $mname: self.$mname.to_args(),
                         )*
                     }
@@ -72,4 +106,5 @@ macro_rules! args {
     };
 }
 
-pub(super) use args;
+pub use args;
+pub use paste::paste;

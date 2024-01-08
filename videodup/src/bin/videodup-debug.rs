@@ -33,7 +33,7 @@ struct Cli {
     preproc_args: PreprocCli,
 
     /// Path to the root, where all relative paths originate
-    #[arg(long, short = 'd', default_value = "../../")]
+    #[arg(long, short = 'r', default_value = "../../")]
     root: PathBuf,
 
     /// The repo entry directory to debug, or the repo itself if the flag `all` is given.
