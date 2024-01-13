@@ -19,7 +19,6 @@ image.workspace = true
 clap.workspace = true
 humantime.workspace = true
 rand.workspace = true
-paste.workspace = true
 
 rkyv.workspace = true
 memmap2.workspace = true

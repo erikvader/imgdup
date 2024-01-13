@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use image::{imageops::grayscale, DynamicImage, GenericImageView};
-use imgdup_common::bin_common::args::remove_borders::RemoveBordersCli;
+use imgdup_common::bin_common::args::remove_borders::RemoveBorders;
 
 #[derive(Parser)]
 #[command()]
 /// Performs different stages of removing the borders of an image
 struct Cli {
     #[command(flatten)]
-    border_args: RemoveBordersCli,
+    border_args: RemoveBorders,
 
     /// Don't remove the borders, run maskify instead
     #[arg(long)]
@@ -28,17 +28,15 @@ fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    let border_args = cli.border_args.to_args();
-
     let input = image::open(&cli.input)
         .wrap_err_with(|| format!("Could not open {:?}", cli.input))?
         .to_rgb8();
     println!("before:  {:?}", input.bounds());
 
     let output: DynamicImage = if cli.maskify {
-        border_args.maskify(grayscale(&input)).0.into()
+        cli.border_args.maskify(grayscale(&input)).0.into()
     } else {
-        let cropped = border_args.remove_borders(&input);
+        let cropped = cli.border_args.remove_borders(&input);
         println!("cropped: {:?}", cropped.bounds());
         cropped.to_image().into()
     };

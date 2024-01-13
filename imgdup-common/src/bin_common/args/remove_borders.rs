@@ -16,7 +16,7 @@ args! {
     }
 }
 
-impl RemoveBordersArgs {
+impl RemoveBorders {
     pub fn remove_borders<'a>(self, img: &'a RgbImage) -> SubImage<&'a RgbImage> {
         let gray = grayscale(img);
         let mask = self.maskify(gray);

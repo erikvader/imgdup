@@ -7,10 +7,7 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup_common::{
-    bin_common::args::{
-        preproc::{PreprocArgs, PreprocCli},
-        similarity::{SimiArgs, SimiCli},
-    },
+    bin_common::args::{preproc::Preproc, similarity::Simi},
     bin_common::{
         ignored_hashes::read_ignored,
         init::{init_eyre, init_logger},
@@ -24,10 +21,10 @@ use videodup::video_source::VidSrc;
 /// Edit an existing database
 struct Cli {
     #[command(flatten)]
-    preproc_args: PreprocCli,
+    preproc_args: Preproc,
 
     #[command(flatten)]
-    simi_args: SimiCli,
+    simi_args: Simi,
 
     /// Path to the database to use
     #[arg(long, short = 'f')]
@@ -66,9 +63,6 @@ fn main() -> eyre::Result<()> {
     init_logger(None)?;
     let cli = Cli::parse();
 
-    let preproc_args = cli.preproc_args.to_args();
-    let simi_args = cli.simi_args.to_args();
-
     let mut tree =
         BKTree::<AnySource>::from_file(&cli.database_file).wrap_err_with(|| {
             format!(
@@ -91,7 +85,8 @@ fn main() -> eyre::Result<()> {
             Goal::Purge { ref dir } => {
                 // TODO: create a macro for this temporary downcasting
                 let mut vid_tree = tree.downcast().wrap_err("failed to downcast")?;
-                let res = goal_purge(&mut vid_tree, &dir, &preproc_args, &simi_args);
+                let res =
+                    goal_purge(&mut vid_tree, &dir, &cli.preproc_args, &cli.simi_args);
                 tree = vid_tree.upcast();
                 res
             }
@@ -147,8 +142,8 @@ fn goal_rebuild(
 fn goal_purge(
     tree: &mut BKTree<VidSrc>,
     dir: &Path,
-    preproc_args: &PreprocArgs,
-    simi_args: &SimiArgs,
+    preproc_args: &Preproc,
+    simi_args: &Simi,
 ) -> eyre::Result<()> {
     log::info!("Reading hashes to ignore");
     let ignored = read_ignored(dir, preproc_args, simi_args)

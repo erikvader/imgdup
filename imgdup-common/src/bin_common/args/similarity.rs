@@ -13,7 +13,7 @@ args! {
     }
 }
 
-impl SimiArgs {
+impl Simi {
     pub fn threshold(&self) -> Distance {
         self.similarity_threshold
     }

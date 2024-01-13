@@ -6,8 +6,8 @@ use crate::imghash::hamming::Hamming;
 use crate::utils::fsutils::all_files;
 use crate::utils::imgutils;
 
-use super::args::preproc::PreprocArgs;
-use super::args::similarity::SimiArgs;
+use super::args::preproc::Preproc;
+use super::args::similarity::Simi;
 
 pub struct Ignored {
     hashes: Vec<Hamming>,
@@ -22,7 +22,7 @@ impl Ignored {
         self.hashes.len()
     }
 
-    pub fn is_ignored(&self, simi: &SimiArgs, test_subject: Hamming) -> bool {
+    pub fn is_ignored(&self, simi: &Simi, test_subject: Hamming) -> bool {
         self.hashes
             .iter()
             .any(|ign| simi.are_similar(*ign, test_subject))
@@ -37,8 +37,8 @@ impl Ignored {
 // where there is no transparency
 pub fn read_ignored(
     dir: impl AsRef<Path>,
-    preproc: &PreprocArgs,
-    simi: &SimiArgs,
+    preproc: &Preproc,
+    simi: &Simi,
 ) -> eyre::Result<Ignored> {
     let all_files: Vec<_> = all_files([dir]).wrap_err("failed to read dir")?;
     let mut hashes = Vec::with_capacity(all_files.len());

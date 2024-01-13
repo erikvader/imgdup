@@ -8,10 +8,7 @@ use color_eyre::eyre::{self, Context};
 use image::RgbImage;
 use imgdup_common::{
     bin_common::{
-        args::{
-            preproc::{PreprocArgs, PreprocCli},
-            similarity::{SimiArgs, SimiCli},
-        },
+        args::{preproc::Preproc, similarity::Simi},
         init::{init_eyre, init_logger},
     },
     utils::repo::{Entry, Repo},
@@ -27,10 +24,10 @@ use videodup::{
 /// Dump debug information on a dup
 struct Cli {
     #[command(flatten)]
-    simi_args: SimiCli,
+    simi_args: Simi,
 
     #[command(flatten)]
-    preproc_args: PreprocCli,
+    preproc_args: Preproc,
 
     /// Path to the root, where all relative paths originate
     #[arg(long, short = 'r', default_value = "../../")]
@@ -59,9 +56,6 @@ fn main() -> eyre::Result<()> {
     init_logger(None)?;
     let cli = Cli::parse();
 
-    let simi_args = cli.simi_args.to_args();
-    let preproc_args = cli.preproc_args.to_args();
-
     let root = cli.root;
 
     let entries = if cli.all {
@@ -77,8 +71,8 @@ fn main() -> eyre::Result<()> {
     for repo_entry in entries {
         execute_on_entry(
             cli.max_collisions,
-            &simi_args,
-            &preproc_args,
+            &cli.simi_args,
+            &cli.preproc_args,
             &root,
             repo_entry,
         )?;
@@ -89,8 +83,8 @@ fn main() -> eyre::Result<()> {
 
 fn execute_on_entry(
     max_collisions: usize,
-    simi_args: &SimiArgs,
-    preproc_args: &PreprocArgs,
+    simi_args: &Simi,
+    preproc_args: &Preproc,
     root: &Path,
     mut repo_entry: Entry,
 ) -> eyre::Result<()> {
@@ -129,7 +123,7 @@ fn save_collisions(
     repo_entry: &mut Entry,
     root: &Path,
     images: HashMap<VidSrc, PreprocImage>,
-    simi_args: &SimiArgs,
+    simi_args: &Simi,
 ) -> eyre::Result<()> {
     for Collision { other, reference } in collisions {
         let mut entry = repo_entry
@@ -231,7 +225,7 @@ fn read_images_from_videos(
 
 fn preproc_images(
     images: HashMap<VidSrc, RgbImage>,
-    preproc_args: &PreprocArgs,
+    preproc_args: &Preproc,
 ) -> HashMap<VidSrc, PreprocImage> {
     images
         .into_iter()

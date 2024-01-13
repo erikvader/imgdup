@@ -1,15 +1,11 @@
 use image::{imageops::grayscale, RgbImage};
 
 use crate::{
-    bin_common::args::{
-        one_color::{OneColorArgs, OneColorCli},
-        remove_borders::{RemoveBordersArgs, RemoveBordersCli},
-    },
     imghash::{hamming::Hamming, imghash},
     utils::imgutils,
 };
 
-use super::args_helper::args;
+use super::{args_helper::args, one_color::OneColor, remove_borders::RemoveBorders};
 
 args! {
     Preproc {
@@ -26,7 +22,7 @@ pub enum PreprocError {
     TooOneColor,
 }
 
-impl PreprocArgs {
+impl Preproc {
     /// Preprocesses the image and hashes it, unless it is deemed a bad picture
     pub fn hash_img(&self, img: &RgbImage) -> Result<Hamming, PreprocError> {
         let gray = grayscale(img);

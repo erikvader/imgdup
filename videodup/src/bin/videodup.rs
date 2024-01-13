@@ -14,8 +14,8 @@ use image::RgbImage;
 use imgdup_common::{
     bin_common::{
         args::{
-            preproc::{PreprocArgs, PreprocCli, PreprocError},
-            similarity::{SimiArgs, SimiCli},
+            preproc::{Preproc, PreprocError},
+            similarity::Simi,
         },
         ignored_hashes::{read_ignored, Ignored},
         init::{init_eyre, init_logger},
@@ -47,13 +47,13 @@ use videodup::{
 /// This uses rayon, so the `RAYON_NUM_THREADS` environment variable might be of interest.
 struct Cli {
     #[command(flatten)]
-    simi_args: SimiCli,
+    simi_args: Simi,
 
     #[command(flatten)]
-    preproc_args: PreprocCli,
+    preproc_args: Preproc,
 
     #[command(flatten)]
-    get_hashes_args: video::GetHashesCli,
+    get_hashes_args: video::GetHashes,
 
     /// Use this many threads to read video files
     #[arg(long, short = 'j', default_value = "1")]
@@ -162,13 +162,10 @@ fn main() -> eyre::Result<()> {
     tree.remove_any_of(|_, vidsrc| removed_files.contains(vidsrc.path()))?;
 
     let video_threads: usize = cli.video_threads.get().try_into().expect("should fit");
-    let preproc_args = cli.preproc_args.to_args();
-    let simi_args = cli.simi_args.to_args();
-    let get_hashes_args = cli.get_hashes_args.to_args();
 
     let ignored_hashes = if let Some(ignore_dir) = cli.ignore_dir {
         log::info!("Reading images to ignore from: {}", ignore_dir.display());
-        read_ignored(ignore_dir, &preproc_args, &simi_args)
+        read_ignored(ignore_dir, &cli.preproc_args, &cli.simi_args)
             .wrap_err("failed to read images to ignore")?
     } else {
         Ignored::empty()
@@ -194,9 +191,9 @@ fn main() -> eyre::Result<()> {
         let (tx, rx) = mpsc::sync_channel::<Payload>(16);
 
         let video_ctx = video::Ctx {
-            preproc_args: &preproc_args,
-            simi_args: &simi_args,
-            get_hashes_args: &get_hashes_args,
+            preproc_args: &cli.preproc_args,
+            simi_args: &cli.simi_args,
+            get_hashes_args: &cli.get_hashes_args,
             ignored_hashes: &ignored_hashes,
             new_files: &new_files,
             repo_grave: repo_grave.as_ref(),
@@ -210,7 +207,7 @@ fn main() -> eyre::Result<()> {
         drop(tx);
 
         let tree_ctx = tree::Ctx {
-            simi_args: &simi_args,
+            simi_args: &cli.simi_args,
             term_cookie: &term_cookie,
         };
         s.spawn("T", move || tree::main(tree_ctx, rx, tree, repo_dup));
@@ -264,6 +261,8 @@ mod common {
 
 // TODO: put these modules into their own files
 mod video {
+    use imgdup_common::args;
+
     use super::*;
 
     // NOTE: since humantime couldn't provide this itself...
@@ -271,7 +270,7 @@ mod video {
         Duration::from_millis(millis).into()
     }
 
-    imgdup_common::args! {
+    args! {
         GetHashes {
             "Minimum amount of frames to be extracted, regardless of video length"
             min_frames: NonZeroU32 = NonZeroU32::new(5).unwrap();
@@ -283,17 +282,17 @@ mod video {
             "Time between progress logs"
             progress_log_every: humantime::Duration = Duration::from_secs(10).into();
 
-            [] "Time between frames that will only be used for searching. Each step will \
-                be independent"
-            phantom_steps: Vec<humantime::Duration> = [humantime_millis(4200)];
+            "Time between frames that will only be used for searching. Each step will \
+             be independent"
+            phantom_steps: Vec<humantime::Duration> []= [humantime_millis(4200)];
         }
     }
 
     #[derive(Clone, Copy)]
     pub struct Ctx<'env> {
-        pub preproc_args: &'env PreprocArgs,
-        pub simi_args: &'env SimiArgs,
-        pub get_hashes_args: &'env GetHashesArgs,
+        pub preproc_args: &'env Preproc,
+        pub simi_args: &'env Simi,
+        pub get_hashes_args: &'env GetHashes,
         pub ignored_hashes: &'env Ignored,
         pub new_files: &'env WorkQueue<&'env SimplePath>,
         pub repo_grave: Option<&'env Mutex<Repo>>,
@@ -602,7 +601,7 @@ mod tree {
 
     #[derive(Clone, Copy)]
     pub struct Ctx<'env> {
-        pub simi_args: &'env SimiArgs,
+        pub simi_args: &'env Simi,
         pub term_cookie: &'env termination::Cookie,
     }
 

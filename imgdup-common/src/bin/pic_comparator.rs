@@ -8,7 +8,7 @@ use std::{
 
 use clap::Parser;
 use imgdup_common::{
-    bin_common::args::remove_borders::{RemoveBordersArgs, RemoveBordersCli},
+    bin_common::args::remove_borders::RemoveBorders,
     imghash::{
         hamming::{Distance, Hamming},
         imghash,
@@ -25,7 +25,7 @@ use imgdup_common::{
 /// Hash pictures and compare them against each other
 struct Cli {
     #[command(flatten)]
-    border_args: RemoveBordersCli,
+    border_args: RemoveBorders,
 
     /// Save all collisions below this distance
     #[arg(long, short = 'c')]
@@ -44,7 +44,7 @@ fn main() -> eyre::Result<()> {
     let pictures: Vec<_> = all_files(&cli.picture_folders)?;
 
     println!("Hashing all pictures...");
-    let hashes = hash_pictures(&pictures, cli.border_args.to_args())?;
+    let hashes = hash_pictures(&pictures, cli.border_args)?;
 
     assert_eq!(hashes.len(), pictures.len());
 
@@ -68,7 +68,7 @@ fn main() -> eyre::Result<()> {
 
 fn hash_pictures(
     pictures: &[PathBuf],
-    config: RemoveBordersArgs,
+    config: RemoveBorders,
 ) -> image::ImageResult<Vec<Option<Hamming>>> {
     let mut file = BufWriter::new(File::create("empty.txt")?);
     let empty_dir = Path::new("empty");

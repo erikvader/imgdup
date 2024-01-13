@@ -16,7 +16,7 @@ args! {
     }
 }
 
-impl OneColorArgs {
+impl OneColor {
     pub fn one_color(self, img: &RgbImage) -> f64 {
         self.one_color_gray(&grayscale(img))
     }
