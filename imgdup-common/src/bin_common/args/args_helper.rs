@@ -26,7 +26,7 @@ macro_rules! args {
     (@arms ($name:ident: $type:ty; $($rest:tt)*) ->
      ($($carry:tt)*) ($($sb:tt)*) ($($db:tt)*) ($($se:tt)*)) =>
     {
-        args!(@arms ($($rest)*) ->
+        $crate::args!(@arms ($($rest)*) ->
                ($($carry)*)
                ($($sb)*
                 #[command(flatten)]
@@ -41,19 +41,19 @@ macro_rules! args {
     };
 
     // A list
-    (@arms ($help:literal $name:ident: $type:ty []= $default:expr; $($rest:tt)*) ->
+    (@arms ($help:literal $name:ident: $container:tt<$type:ty> []= $default:expr; $($rest:tt)*) ->
      ($($carry:tt)*) ($($sb:tt)*) ($($db:tt)*) ($($se:tt)*)) =>
     {
-        args!(@arms ($($rest)*) ->
+        $crate::args!(@arms ($($rest)*) ->
                ($($carry)*)
                ($($sb)*
-                #[arg(long, default_values_t = $default, help = $help)]
-                pub $name: $type,)
+                #[arg(long, num_args = 0.., default_values_t = $default, help = $help)]
+                pub $name: $container<$type>,)
                ($($db)*
                $name: $default.into_iter().collect(),)
                ($($se)*
-                pub fn $name(mut self, $name: $type) -> Self {
-                    self.$name = $name;
+                pub fn $name(mut self, $name: impl IntoIterator<Item=$type>) -> Self {
+                    self.$name = $name.into_iter().collect();
                     self
                 })
         );
@@ -63,7 +63,7 @@ macro_rules! args {
     (@arms ($help:literal $name:ident: $type:ty = $default:expr; $($rest:tt)*) ->
      ($($carry:tt)*) ($($sb:tt)*) ($($db:tt)*) ($($se:tt)*)) =>
     {
-        args!(@arms ($($rest)*) ->
+        $crate::args!(@arms ($($rest)*) ->
                ($($carry)*)
                ($($sb)*
                 #[arg(long, default_value_t = $default, help = $help)]
@@ -80,7 +80,7 @@ macro_rules! args {
     // Start here
     ($(#[$meta:meta])* $name:ident {$($rest:tt)*}) =>
     {
-        args!(@arms ($($rest)*) -> ($(#[$meta])* $name) () () ());
+        $crate::args!(@arms ($($rest)*) -> ($(#[$meta])* $name) () () ());
     };
 }
 
@@ -90,15 +90,19 @@ pub use args;
 mod test {
     #![allow(dead_code)]
 
+    use clap::Parser;
+
+    use super::*;
+
     #[derive(clap::Args, Debug, PartialEq)]
     pub struct Manual {
         #[arg(long, default_value_t = 21, help = "hej")]
-        omg: i32,
+        yas: i32,
     }
 
     impl std::default::Default for Manual {
         fn default() -> Self {
-            Self { omg: 22 }
+            Self { yas: 22 }
         }
     }
 
@@ -115,10 +119,54 @@ mod test {
         }
     }
 
+    #[derive(Parser, Debug)]
+    #[command()]
+    struct Cmd {
+        #[command(flatten)]
+        auto: Auto,
+    }
+
     #[test]
-    fn args() {
+    fn default() {
         let auto = Auto::default();
         assert_eq!(21, auto.omg);
-        assert_eq!(22, auto.asd.omg);
+        assert_eq!(22, auto.asd.yas);
+    }
+
+    #[test]
+    fn list() {
+        let auto = Cmd::try_parse_from([""]).unwrap().auto;
+        assert_eq!(vec![1, 2], auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej", "1"]).unwrap().auto;
+        assert_eq!(vec![1], auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej"]).unwrap().auto;
+        assert_eq!(Vec::<i32>::new(), auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej", "--yas", "78"])
+            .unwrap()
+            .auto;
+        assert_eq!(Vec::<i32>::new(), auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej", "--hej", "78"])
+            .unwrap()
+            .auto;
+        assert_eq!(vec![78], auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej", "--hej", "78", "--hej", "12"])
+            .unwrap()
+            .auto;
+        assert_eq!(vec![78, 12], auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej", "78", "--hej", "12"])
+            .unwrap()
+            .auto;
+        assert_eq!(vec![78, 12], auto.hej);
+
+        let auto = Cmd::try_parse_from(["", "--hej", "78", "--hej", "12", "--hej"])
+            .unwrap()
+            .auto;
+        assert_eq!(vec![78, 12], auto.hej);
     }
 }

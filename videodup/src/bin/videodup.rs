@@ -112,6 +112,10 @@ fn main() -> eyre::Result<()> {
     let cli = cli_arguments()?;
     init_logger(cli.logfile.as_deref())?;
 
+    // TODO: figure out how to print this in a mor readable way, like key-value pairs, one
+    // per line, or something
+    log::debug!("CLI arguments: {cli:#?}");
+
     // TODO: extract all these functions
     log::info!("Backing up the database file");
     fsutils::backup_file(&cli.database_file)
