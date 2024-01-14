@@ -7,7 +7,7 @@ default:
     @just --list --justfile '{{justfile()}}'
 
 reset:
-    rm -vrf output/* masks/*
+    rm -vrf output masks
 
 mkdirs:
     mkdir -p output masks

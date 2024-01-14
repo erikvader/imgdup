@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -13,7 +14,9 @@ use imgdup_common::{
         init::{init_eyre, init_logger},
     },
     bktree::{bktree::BKTree, source_types::AnySource},
+    utils::simple_path::SimplePathBuf,
 };
+use rand::seq::IteratorRandom;
 use videodup::video_source::VidSrc;
 
 #[derive(Parser, Debug)]
@@ -42,6 +45,7 @@ enum Goal {
     Rebuild,
     Purge { dir: PathBuf },
     List { file: PathBuf },
+    RandomDelete { num: usize },
 }
 
 fn goal_parser(s: &str) -> Result<Goal, String> {
@@ -49,8 +53,13 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
     match &parts[..] {
         &["stats"] => Ok(Goal::Stats),
         &["rebuild"] => Ok(Goal::Rebuild),
-        &["list", arg1] => Ok(Goal::List { file: arg1.into() }),
-        &["purge", arg1] => Ok(Goal::Purge { dir: arg1.into() }),
+        &["list", file] => Ok(Goal::List { file: file.into() }),
+        &["purge", dir] => Ok(Goal::Purge { dir: dir.into() }),
+        &["randel", num] => Ok(Goal::RandomDelete {
+            num: num
+                .parse::<usize>()
+                .map_err(|_| "Expected a number".to_string())?,
+        }),
         _ => Err(format!("Failed to parse goal '{s}', unrecognized")),
     }
 }
@@ -93,6 +102,12 @@ fn main() -> eyre::Result<()> {
             Goal::List { ref file } => {
                 let vid_tree = tree.downcast().wrap_err("failed to downcast")?;
                 let res = goal_list(&vid_tree, &file);
+                tree = vid_tree.upcast();
+                res
+            }
+            Goal::RandomDelete { num } => {
+                let mut vid_tree = tree.downcast().wrap_err("failed to downcast")?;
+                let res = goal_random_delete(&mut vid_tree, num);
                 tree = vid_tree.upcast();
                 res
             }
@@ -176,7 +191,8 @@ fn goal_list(tree: &BKTree<VidSrc>, file_path: &Path) -> eyre::Result<()> {
         tree.for_each(|hash, vidsrc| {
             let vidsrc = vidsrc.path();
             lines.push(format!("Source={vidsrc}, Hash={hash}"));
-        })?;
+        })
+        .wrap_err("failed to iterate through the tree")?;
         lines.sort();
         lines
     };
@@ -192,5 +208,35 @@ fn goal_list(tree: &BKTree<VidSrc>, file_path: &Path) -> eyre::Result<()> {
     file.flush().wrap_err("failed to flush")?;
 
     log::info!("Wrote the entries in the tree to a file");
+    Ok(())
+}
+
+fn goal_random_delete(vid_tree: &mut BKTree<VidSrc>, num: usize) -> eyre::Result<()> {
+    log::info!("Finding all video paths in the tree");
+    let videos = {
+        let mut videos = HashSet::new();
+        vid_tree
+            .for_each(|_, vidsrc| {
+                videos.insert(vidsrc.path());
+            })
+            .wrap_err("failed to find all video paths")?;
+        videos
+    };
+    log::info!("Found {} video paths", videos.len());
+
+    let to_remove: HashSet<SimplePathBuf> = videos
+        .into_iter()
+        .choose_multiple(&mut rand::thread_rng(), num)
+        .into_iter()
+        .map(|p| p.to_owned())
+        .inspect(|p| log::info!("Will remove '{p}'"))
+        .collect();
+
+    log::info!("Removing stuff...");
+    vid_tree
+        .remove_any_of(|_, vidsrc| to_remove.contains(vidsrc.path()))
+        .wrap_err("failed to remove all nodes from the tree")?;
+    log::info!("Done!");
+
     Ok(())
 }

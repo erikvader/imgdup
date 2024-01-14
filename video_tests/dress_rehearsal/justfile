@@ -12,7 +12,7 @@ default:
 
 # Removes all generated files
 reset:
-    rm -vrf videodup.db videodup.db.backup _DUPS_/* _GRAVEYARD_/* list.txt
+    rm -vrf videodup.db videodup.db.backup _DUPS_ _GRAVEYARD_ list.txt
 
 mkdirs:
     mkdir -p _GRAVEYARD_ _DUPS_
@@ -25,5 +25,10 @@ videodup: mkdirs
 debug:
     {{rootjust}} run release videodup-debug --all --root . --entry-dir _DUPS_
 
+# Manual debugging and testing
+
 list:
     {{rootjust}} run release videodup-edit --database-file videodup.db stats list:list.txt
+
+randel:
+    {{rootjust}} run release videodup-edit --database-file videodup.db randel:2
