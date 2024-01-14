@@ -233,7 +233,7 @@ fn preproc_images(
             (
                 vidsrc,
                 PreprocImage {
-                    preproc: preproc_args.preprocess(&img),
+                    preproc: preproc_args.preprocess(&img).to_image(),
                     original: img,
                 },
             )

@@ -1,4 +1,4 @@
-use image::{imageops::grayscale, RgbImage};
+use image::{imageops::grayscale, RgbImage, SubImage};
 
 use crate::{
     imghash::{hamming::Hamming, imghash},
@@ -25,6 +25,15 @@ pub enum PreprocError {
 impl Preproc {
     /// Preprocesses the image and hashes it, unless it is deemed a bad picture
     pub fn hash_img(&self, img: &RgbImage) -> Result<Hamming, PreprocError> {
+        let processed = self.check(img)?;
+        Ok(imghash::hash_sub(&processed))
+    }
+
+    /// Figure out if the image is good and then return it preprocessed
+    pub fn check<'a>(
+        &self,
+        img: &'a RgbImage,
+    ) -> Result<SubImage<&'a RgbImage>, PreprocError> {
         let gray = grayscale(img);
         let one_color = self.one_color_args.one_color_gray(&gray);
         if self.one_color_args.is_value_too_one_color(one_color) {
@@ -37,12 +46,19 @@ impl Preproc {
             return Err(PreprocError::Empty);
         }
 
-        Ok(imghash::hash_sub(&no_borders))
+        // TODO: figure out how to avoid converting the image to grayscale twice. One
+        // solution could be to transfer the bounds from `no_borders` to the gray image,
+        // but it doesn't seem possible to extract the x and y position of the SubImage
+        // without deprecated functions... image-0.24.8
+        if self.one_color_args.is_too_one_color(&*no_borders) {
+            return Err(PreprocError::TooOneColor);
+        }
+
+        Ok(no_borders)
     }
 
     /// Preprocess the image
-    // NOTE: this returns a new image to allow for preprocessing other than cropping
-    pub fn preprocess(&self, img: &RgbImage) -> RgbImage {
-        self.border_args.remove_borders(img).to_image()
+    pub fn preprocess<'a>(&self, img: &'a RgbImage) -> SubImage<&'a RgbImage> {
+        self.border_args.remove_borders(img)
     }
 }

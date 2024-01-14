@@ -1,0 +1,7 @@
+import '../lib.just'
+
+default:
+    @just --list --justfile '{{justfile()}}'
+
+run:
+    {{rootjust}} run release preproc bland/* interesting/* 2>/dev/null

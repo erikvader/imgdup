@@ -1,4 +1,4 @@
-use image::{imageops::grayscale, GrayImage, RgbImage};
+use image::{imageops::grayscale, GenericImageView, GrayImage, Pixel, RgbImage};
 
 use crate::utils::imgutils::{most_common_gray, percent_gray};
 
@@ -30,7 +30,11 @@ impl OneColor {
         one_color >= self.one_color_threshold
     }
 
-    pub fn is_too_one_color(self, img: &RgbImage) -> bool {
+    pub fn is_too_one_color<I, P>(self, img: &I) -> bool
+    where
+        I: GenericImageView<Pixel = P>,
+        P: Pixel<Subpixel = u8>,
+    {
         self.is_too_one_color_gray(&grayscale(img))
     }
 
