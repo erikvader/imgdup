@@ -18,7 +18,6 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(
-    Debug,
     Serialize,
     Archive,
     Hash,
@@ -137,7 +136,7 @@ impl AsRef<SimplePath> for ArchivedSimplePathBuf {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct SimplePath {
     inner: str,
@@ -267,6 +266,18 @@ impl PartialEq<SimplePath> for SimplePathBuf {
 impl PartialEq<&SimplePath> for SimplePathBuf {
     fn eq(&self, other: &&SimplePath) -> bool {
         other == self
+    }
+}
+
+impl std::fmt::Debug for SimplePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", &self.inner)
+    }
+}
+
+impl std::fmt::Debug for SimplePathBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.inner)
     }
 }
 
