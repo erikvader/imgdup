@@ -8,27 +8,17 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use imgdup_common::{
-    bin_common::args::{preproc::Preproc, similarity::Simi},
-    bin_common::{
-        ignored_hashes::read_ignored,
-        init::{init_eyre, init_logger},
-    },
+    bin_common::init::{init_eyre, init_logger},
     bktree::{bktree::BKTree, source_types::AnySource},
-    utils::simple_path::SimplePathBuf,
+    utils::{repo::Repo, simple_path::SimplePathBuf},
 };
 use rand::seq::IteratorRandom;
-use videodup::video_source::VidSrc;
+use videodup::{debug_info, video_source::VidSrc};
 
 #[derive(Parser, Debug)]
 #[command()]
 /// Edit an existing database
 struct Cli {
-    #[command(flatten)]
-    preproc_args: Preproc,
-
-    #[command(flatten)]
-    simi_args: Simi,
-
     /// Path to the database to use
     #[arg(long, short = 'f')]
     database_file: PathBuf,
@@ -43,7 +33,7 @@ struct Cli {
 enum Goal {
     Stats,
     Rebuild,
-    Purge { dir: PathBuf },
+    Purge { repo: PathBuf },
     List { file: PathBuf },
     RandomDelete { num: usize },
 }
@@ -54,7 +44,7 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
         &["stats"] => Ok(Goal::Stats),
         &["rebuild"] => Ok(Goal::Rebuild),
         &["list", file] => Ok(Goal::List { file: file.into() }),
-        &["purge", dir] => Ok(Goal::Purge { dir: dir.into() }),
+        &["purge", repo] => Ok(Goal::Purge { repo: repo.into() }),
         &["randel", num] => Ok(Goal::RandomDelete {
             num: num
                 .parse::<usize>()
@@ -91,11 +81,10 @@ fn main() -> eyre::Result<()> {
                 }
                 Err(e) => Err(e),
             },
-            Goal::Purge { ref dir } => {
+            Goal::Purge { ref repo } => {
                 // TODO: create a macro for this temporary downcasting
                 let mut vid_tree = tree.downcast().wrap_err("failed to downcast")?;
-                let res =
-                    goal_purge(&mut vid_tree, &dir, &cli.preproc_args, &cli.simi_args);
+                let res = goal_purge(&mut vid_tree, &repo);
                 tree = vid_tree.upcast();
                 res
             }
@@ -154,32 +143,32 @@ fn goal_rebuild(
     Ok(new_tree)
 }
 
-fn goal_purge(
-    tree: &mut BKTree<VidSrc>,
-    dir: &Path,
-    preproc_args: &Preproc,
-    simi_args: &Simi,
-) -> eyre::Result<()> {
-    log::info!("Reading hashes to ignore");
-    let ignored = read_ignored(dir, preproc_args, simi_args)
-        .wrap_err_with(|| format!("failed to read hashes from: {}", dir.display()))?;
-    log::info!("Read {}", ignored.len());
+fn goal_purge(tree: &mut BKTree<VidSrc>, dir: &Path) -> eyre::Result<()> {
+    log::info!("Purging every video from the dup dir: {}", dir.display());
+    let mut all_videos = HashSet::new();
+    let repo = Repo::new(dir).wrap_err("failed to open the dir as a repo")?;
+    for entry in repo.entries()? {
+        let collisions = entry
+            .read_file(debug_info::DEBUG_INFO_FILENAME, |buf| {
+                debug_info::read_from(buf)
+            })
+            .wrap_err("failed to read the debug info file")?;
+        all_videos.extend(collisions.all().into_iter().map(|path| path.to_owned()));
+    }
 
-    log::info!("Removing them from the tree");
-    let mut count = 0;
-    tree.remove_any_of(|hash, vidsrc| {
-        let matched = ignored.iter().any(|ign| simi_args.are_similar(ign, hash));
+    log::info!("Removing {} different videos", all_videos.len());
 
-        if matched {
-            // TODO: also print the timestamp. Have a nice general Display for vidsrc?
-            log::debug!("Removing a frame with source: {}", vidsrc.path());
-            count += 1;
+    let mut counter = 0;
+    tree.remove_any_of(|_, vidsrc| {
+        let rm = all_videos.contains(vidsrc.path());
+        if rm {
+            counter += 1;
         }
-
-        matched
+        rm
     })
-    .wrap_err("failed to remove stuff in tree")?;
-    log::info!("Removed a total of {} frames", count);
+    .wrap_err("failed to remove from the tree")?;
+
+    log::info!("Removed {counter} nodes from the tree");
 
     Ok(())
 }

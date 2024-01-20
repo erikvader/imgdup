@@ -34,6 +34,9 @@ impl Preproc {
         &self,
         img: &'a RgbImage,
     ) -> Result<SubImage<&'a RgbImage>, PreprocError> {
+        // TODO: This whole function is complex and difficult to follow, just to avoid
+        // redoing calculations as much as possible. This could maybe be remade in a way
+        // that caches results in the background somwhow?
         let gray = grayscale(img);
         let one_color = self.one_color_args.one_color_gray(&gray);
         if self.one_color_args.is_value_too_one_color(one_color) {

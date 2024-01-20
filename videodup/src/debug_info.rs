@@ -33,6 +33,13 @@ impl Collisions {
             .map(|col| col.other.vidsrc.path())
             .collect()
     }
+
+    pub fn all(&self) -> HashSet<&SimplePath> {
+        self.collisions
+            .iter()
+            .flat_map(|col| [col.reference.vidsrc.path(), col.other.vidsrc.path()])
+            .collect()
+    }
 }
 
 pub fn save_to(writer: impl std::io::Write, info: &Collisions) -> ron::Result<()> {

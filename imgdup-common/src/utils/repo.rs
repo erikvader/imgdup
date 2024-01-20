@@ -132,7 +132,7 @@ impl Entry {
         Ok(())
     }
 
-    /// Open the some file with name `name` and apply the fallible function on it which
+    /// Open some file with name `name` and apply the fallible function on it which
     /// should interpret the data to something
     pub fn read_file<R, T, E>(&self, name: impl AsRef<Path>, reader: R) -> eyre::Result<T>
     where

@@ -88,7 +88,10 @@ fn execute_on_entry(
     root: &Path,
     mut repo_entry: Entry,
 ) -> eyre::Result<()> {
-    log::info!("Creating debug info at: {}", repo_entry.path().display());
+    log::info!(
+        "Creating debugging data at: {}",
+        repo_entry.path().display()
+    );
 
     log::info!("Reading debug info file...");
     let mut collisions = repo_entry
