@@ -11,6 +11,7 @@ use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use common::{Frame, Payload};
 use image::RgbImage;
+use imgdup_common::args;
 use imgdup_common::{
     bin_common::{
         args::{
@@ -36,7 +37,7 @@ use imgdup_common::{
 use rayon::prelude::*;
 use videodup::{
     debug_info::{self, Collision, Collisions, DEBUG_INFO_FILENAME},
-    frame_extractor::{FrameExtractor, Timestamp},
+    frame_extractor::{ContextLogger, FrameExtractor, Timestamp},
     video_source::{Mirror, VidSrc},
 };
 
@@ -265,8 +266,6 @@ mod common {
 
 // TODO: put these modules into their own files
 mod video {
-    use imgdup_common::args;
-
     use super::*;
 
     // NOTE: since humantime couldn't provide this itself...
@@ -364,8 +363,11 @@ mod video {
     ) -> eyre::Result<Vec<Frame>> {
         log::info!("Retrieving hashes for: {}", video);
 
-        let mut extractor = FrameExtractor::new(video.as_path())
-            .wrap_err("Failed to create the extractor")?;
+        let mut extractor = FrameExtractor::new_with_logger(
+            video.as_path(),
+            ContextLogger::new(video.as_path()),
+        )
+        .wrap_err("Failed to create the extractor")?;
         let approx_len = extractor.approx_length();
         log::debug!(
             "The video is approx {} long",

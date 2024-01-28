@@ -2,9 +2,12 @@ extern crate ffmpeg_next as ffmpeg;
 
 use std::cell::RefCell;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
+
+use super::logger::{self, fault, warning, Item};
+use super::timestamp::Timestamp;
 
 use color_eyre::eyre::{self, Context};
 use ffmpeg::codec::Context as CodecContext;
@@ -19,15 +22,15 @@ use ffmpeg::{Dictionary, Packet as CodecPacket, Rational, Rescale};
 use ffmpeg_sys_next::{AV_NOPTS_VALUE, AV_TIME_BASE_Q};
 use image::RgbImage;
 
-use super::timestamp::Timestamp;
-
 // TODO: a dedicated error type should probably be preferred here?
 pub type Result<T> = eyre::Result<T>;
 
 static FFMPEG_INITIALIZED: OnceLock<std::result::Result<(), ffmpeg::Error>> =
     OnceLock::new();
 
-pub struct FrameExtractor {
+pub struct FrameExtractor<L: logger::Logger = logger::LogLogger> {
+    logger: L,
+
     // TODO: probably split into several structs
     // ffmpeg contexts
     ictx: FormatContext,
@@ -47,47 +50,22 @@ pub struct FrameExtractor {
 }
 
 thread_local! {
-    static PATH: RefCell<PathBuf> = RefCell::new(PathBuf::new());
+    // TODO: support multiple extractors per thread by having multiple vecs in a map,
+    // unless it works out anyway.
+    static LOGS: RefCell<Vec<Item>> = const {RefCell::new(Vec::new())};
 }
 
-macro_rules! path_log {
-    ($level:ident, $fmt:literal) => {
-        PATH.with_borrow(|path| {
-            log::$level!(concat!($fmt, " ({})"), path.display())
-        })
-    };
-    ($level:ident, $fmt:literal, $($arg:tt)+) => {
-        PATH.with_borrow(|path| {
-            log::$level!(concat!($fmt, " ({})"), $($arg)+, path.display())
-        })
-    };
-    (target: $target:expr, $level:expr, $fmt:literal) => {
-        PATH.with_borrow(|path| {
-            log::log!(target: $target, $level, concat!($fmt, " ({})"), path.display())
-        })
-    };
-    (target: $target:expr, $level:expr, $fmt:literal, $($arg:tt)+) => {
-        PATH.with_borrow(|path| {
-            log::log!(target: $target, $level, concat!($fmt, " ({})"), $($arg)+, path.display())
-        })
-    };
+impl FrameExtractor<logger::LogLogger> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::new_with_logger(path, logger::LogLogger)
+    }
 }
 
-impl FrameExtractor {
-    // NOTE: Its a little bit ugly that this takes ownership of the path, it should take a
-    // reference, but its used in a thread_local that a ffmpeg callback function is using
-    // to add what file produced the log message. And also to `Result` messages as
-    // context, but the upstream function could do that instead, which is better because
-    // it could add them in one spot. Maybe some kind of structured logging is the
-    // solution here?
-
-    // TODO: I don't like that this whole module logs. The `next` method could maybe
-    // return either a frame or a log message that was produced when retrieving the next
-    // frame? It would make things more flexible, but also a little bit messier to
-    // implement, which is why it hasn't been done that way currently. Another maybe
-    // better solution is to provide a callback closure that gets called everytime there
-    // is a log message?
-    pub fn new<P: Into<PathBuf>>(path: P) -> Result<Self> {
+impl<L> FrameExtractor<L>
+where
+    L: logger::Logger,
+{
+    pub fn new_with_logger(path: impl AsRef<Path>, logger: L) -> Result<Self> {
         if let Err(e) = FFMPEG_INITIALIZED.get_or_init(|| {
             ffmpeg::init()?;
             ffmpeglog::set_level(ffmpeglog::Level::Warning);
@@ -99,18 +77,6 @@ impl FrameExtractor {
             return Err(e).wrap_err("Failed to initialize ffmpeg");
         }
 
-        // NOTE: This is the only place where this is set, it is only read everywhere
-        // else. This assumes that there is only one frame extractor running per thread,
-        // else one of them would use the wrong path. They shouldn't be able to clash with
-        // each other and cause panics.
-        PATH.set(path.into());
-        let s = PATH.with_borrow(|path| {
-            Self::new_inner(&path).wrap_err_with(|| format!("on file {:?}", path))
-        })?;
-        Ok(s)
-    }
-
-    fn new_inner(path: &Path) -> Result<Self> {
         let options = {
             let mut options = Dictionary::new();
             options.set("analyzeduration", "10M");
@@ -148,7 +114,13 @@ impl FrameExtractor {
             "The end timestamp is less than the start"
         );
 
-        let orientation = get_orientation(&video);
+        let orientation = match get_orientation(&video) {
+            Some(x) => x,
+            None => {
+                warning!(logger, "Got a weird orientation angle, ignoring");
+                Orientation::Normal
+            }
+        };
 
         let decoder = CodecContext::from_parameters(video.parameters())
             .wrap_err("No codec found")?
@@ -162,7 +134,8 @@ impl FrameExtractor {
             .filter(|stream| stream.index() != video_stream_index)
             .for_each(|mut stream| stream_set_discard_all(&mut stream));
 
-        Ok(Self {
+        let myself = Self {
+            logger,
             ictx,
             decoder,
             video_stream_index,
@@ -173,6 +146,16 @@ impl FrameExtractor {
             first_timestamp,
             timebase,
             orientation,
+        };
+        myself.log_ffmpeg_logs();
+        Ok(myself)
+    }
+
+    fn log_ffmpeg_logs(&self) {
+        LOGS.with_borrow_mut(|vec| {
+            for item in vec.drain(..) {
+                self.logger.log_item(item);
+            }
         })
     }
 
@@ -191,30 +174,16 @@ impl FrameExtractor {
     }
 
     pub fn next(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
-        self.next_inner()
-            .wrap_err_with(|| PATH.with_borrow(|path| format!("on file {:?}", path)))
-    }
-
-    fn next_inner(&mut self) -> Result<Option<(Timestamp, RgbImage)>> {
-        let Self {
-            ictx,
-            decoder,
-            video_stream_index,
-            converter,
-            cur_timestamp,
-            seek_target_timestamp,
-            timebase,
-            first_timestamp,
-            orientation,
-            ..
-        } = self;
-
         loop {
             loop {
                 let mut frame = FrameVideo::empty();
                 // avcodec_receive_frame
                 // https://ffmpeg.org/doxygen/trunk/group__lavc__decoding.html#ga11e6542c4e66d3028668788a1a74217c
-                match decoder.receive_frame(&mut frame) {
+                match {
+                    let ret = self.decoder.receive_frame(&mut frame);
+                    self.log_ffmpeg_logs();
+                    ret
+                } {
                     Ok(()) => (),
                     Err(ffmpeg::Error::Other {
                         errno: libc::EAGAIN,
@@ -229,48 +198,64 @@ impl FrameExtractor {
                 }
 
                 if let Some(ts) = frame.timestamp() {
-                    *cur_timestamp = ts;
+                    self.cur_timestamp = ts;
                 } else {
-                    let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
-                    path_log!(
-                        warn,
+                    let dur = Timestamp::new(
+                        self.cur_timestamp,
+                        self.timebase,
+                        self.first_timestamp,
+                    );
+                    warning!(
+                        self.logger,
                         "Frame doesn't have a timestamp somewhere after: {}",
                         dur
                     );
                     continue;
                 }
 
-                if *cur_timestamp < *seek_target_timestamp {
+                if self.cur_timestamp < self.seek_target_timestamp {
                     continue;
                 }
 
                 let mut converted = FrameVideo::empty();
-                converter
+                self.converter
                     .run(&frame, &mut converted)
                     .wrap_err("Failed to convert the decoded frame")?;
                 let img = create_rust_image(converted);
-                let img = undo_rotation(img, *orientation);
+                let img = undo_rotation(img, self.orientation);
 
-                let dur = Timestamp::new(*cur_timestamp, *timebase, *first_timestamp);
+                let dur = Timestamp::new(
+                    self.cur_timestamp,
+                    self.timebase,
+                    self.first_timestamp,
+                );
                 return Ok(Some((dur, img)));
             }
 
             loop {
                 // http://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#ga4fdb3084415a82e3810de6ee60e46a61
                 let mut packet = CodecPacket::empty();
-                match packet.read(ictx) {
-                    Ok(()) if packet.stream() == *video_stream_index => {
-                        match decoder.send_packet(&packet) {
+                match {
+                    let ret = packet.read(&mut self.ictx);
+                    self.log_ffmpeg_logs();
+                    ret
+                } {
+                    Ok(()) if packet.stream() == self.video_stream_index => {
+                        match {
+                            let ret = self.decoder.send_packet(&packet);
+                            self.log_ffmpeg_logs();
+                            ret
+                        } {
                             Ok(()) => break,
                             Err(e) => {
-                                path_log!(error, "Failed to decode frame: {}", e);
+                                fault!(self.logger, "Failed to decode frame: {}", e);
                                 continue;
                             }
                         }
                     }
                     Ok(()) => continue,
                     Err(ffmpeg::Error::Eof) => {
-                        decoder
+                        self.decoder
                             .send_eof()
                             .wrap_err("Failed to send EOF to the decoder")?;
                         break;
@@ -333,11 +318,10 @@ impl FrameExtractor {
             ..
         } = self;
 
-        seek(ictx, *video_stream_index, target, ..).wrap_err_with(|| {
-            PATH.with_borrow(|path| format!("Failed to seek on file {:?}", path))
-        })?;
+        seek(ictx, *video_stream_index, target, ..).wrap_err("Failed to seek")?;
         decoder.flush();
         *seek_target_timestamp = target;
+        self.log_ffmpeg_logs();
         Ok(())
     }
 
@@ -353,6 +337,12 @@ impl FrameExtractor {
     }
 }
 
+impl<L: logger::Logger> Drop for FrameExtractor<L> {
+    fn drop(&mut self) {
+        self.log_ffmpeg_logs();
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Orientation {
     Normal,
@@ -361,7 +351,7 @@ enum Orientation {
     Upside,
 }
 
-fn get_orientation(video: &ffmpeg::Stream) -> Orientation {
+fn get_orientation(video: &ffmpeg::Stream) -> Option<Orientation> {
     // TODO: Rotation can also be set in the metadata dict, find an example video and fix!
     for data in video.side_data() {
         if data.kind() != ffmpeg::packet::side_data::Type::DisplayMatrix {
@@ -373,20 +363,16 @@ fn get_orientation(video: &ffmpeg::Stream) -> Orientation {
 
         if rot.is_finite() {
             return match rot.round() as i32 {
-                -90 => Orientation::Right,
-                90 => Orientation::Left,
-                0 => Orientation::Normal,
-                180 | -180 => Orientation::Upside,
-                x => {
-                    // TODO: should this even be logged?
-                    path_log!(warn, "Weird orientation angle: {}", x);
-                    Orientation::Normal
-                }
+                -90 => Some(Orientation::Right),
+                90 => Some(Orientation::Left),
+                0 => Some(Orientation::Normal),
+                180 | -180 => Some(Orientation::Upside),
+                _ => None,
             };
         }
     }
 
-    Orientation::Normal
+    Some(Orientation::Normal)
 }
 
 fn undo_rotation(img: RgbImage, ori: Orientation) -> RgbImage {
@@ -503,8 +489,6 @@ impl fmt::Debug for FrameExtractor {
             )
             .field("seek_ts", seek_target_timestamp);
 
-        PATH.with_borrow(|path| debug_struct.field("path", path));
-
         debug_struct.finish()
     }
 }
@@ -581,17 +565,23 @@ unsafe extern "C" fn ffmpeg_log_adaptor(
 
     let target = format!("ffmpeg::{class_name}");
     let level = match ffmpeglog::Level::try_from(level) {
-        Ok(ffmpeglog::Level::Verbose) => log::Level::Trace,
-        Ok(ffmpeglog::Level::Trace) => log::Level::Trace,
-        Ok(ffmpeglog::Level::Debug) => log::Level::Debug,
-        Ok(ffmpeglog::Level::Error) => log::Level::Error,
-        Ok(ffmpeglog::Level::Fatal) => log::Level::Error,
-        Ok(ffmpeglog::Level::Panic) => log::Level::Error,
-        Ok(ffmpeglog::Level::Warning) => log::Level::Warn,
-        Ok(ffmpeglog::Level::Quiet) => log::Level::Info,
-        Ok(ffmpeglog::Level::Info) => log::Level::Info,
-        Err(_) => log::Level::Info,
+        Ok(ffmpeglog::Level::Verbose) => logger::Level::Verbose,
+        Ok(ffmpeglog::Level::Trace) => logger::Level::Verbose,
+        Ok(ffmpeglog::Level::Quiet) => logger::Level::Verbose,
+        Ok(ffmpeglog::Level::Debug) => logger::Level::Verbose,
+        Ok(ffmpeglog::Level::Error) => logger::Level::Error,
+        Ok(ffmpeglog::Level::Fatal) => logger::Level::Error,
+        Ok(ffmpeglog::Level::Panic) => logger::Level::Error,
+        Ok(ffmpeglog::Level::Warning) => logger::Level::Warn,
+        Ok(ffmpeglog::Level::Info) => logger::Level::Info,
+        Err(_) => logger::Level::Info,
     };
 
-    path_log!(target: &target, level, "{}", rust_str);
+    LOGS.with_borrow_mut(|vec| {
+        vec.push(Item {
+            level,
+            target,
+            body: rust_str,
+        })
+    });
 }
