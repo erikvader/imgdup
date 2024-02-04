@@ -78,9 +78,20 @@ impl<A: Into<f64>> Extend<A> for Variance {
     }
 }
 
+// NOTE: both lerp functions simplify to the same expression, not sure which one is the
+// best. This one is derived from my head and the other one is copied from wikipedia.
 pub fn lerp(from_low: f64, from_up: f64, to_low: f64, to_up: f64, from: f64) -> f64 {
     let perc = (from - from_low) / (from_up - from_low);
     perc * (to_up - to_low) + to_low
+}
+
+pub fn lerp_u128(x0: u128, x1: u128, y0: u128, y1: u128, x: u128) -> u128 {
+    assert!(x1 != x0, "can't be a vertical line");
+    assert!(x >= x0, "because of unsigned ints");
+    assert!(x <= x1, "because of unsigned ints");
+    // NOTE: this is implied by the other asserts
+    // assert!(x1 > x0, "because of unsigned ints");
+    (y0 * (x1 - x) + y1 * (x - x0)) / (x1 - x0)
 }
 
 #[cfg(test)]

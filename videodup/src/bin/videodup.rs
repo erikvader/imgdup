@@ -23,13 +23,15 @@ use imgdup_common::{
         termination,
     },
     bktree::bktree::BKTree,
+    duration,
     imghash::hamming::Hamming,
     utils::{
         fsutils::{self, all_files, read_optional_file},
-        imgutils, math,
+        imgutils,
         repo::{LazyEntry, Repo},
         simple_path::{clap_simple_relative_parser, SimplePath, SimplePathBuf},
         time::{Every, Stepper},
+        timeline::Timeline,
         work_queue::WorkQueue,
         workers::{scoped_workers, FinishedWorker},
     },
@@ -539,45 +541,27 @@ mod video {
         std::cmp::min(maximum_step, video_length / minimum_frames.get())
     }
 
-    /*
-     skip beg and end
-     ^ 1m15s                        4-----------
-     |                             /
-     |                            /
-     |                           /
-     | 5s           2-----------3
-     |
-     | 0s   1--------
-     -------|-------|-----------|---|----------> len
-            0s      30s        1m   5m
-    */
     fn skip_beg_end(len: Duration) -> (Duration, Duration) {
-        const S1: Duration = Duration::ZERO;
-        const L2: f64 = 30.;
-        const L3: f64 = 60.;
-        const S3: f64 = 5.;
-        const L4: f64 = 5. * 60.;
-        const S4: f64 = 60. + 15.;
+        let mut line = Timeline::new_zero();
 
-        let skip =
-        // this
-        if len < Duration::from_secs_f64(L2) {
-            S1
-        }
-        // is
-        else if len <= Duration::from_secs_f64(L3) {
-            Duration::from_secs_f64(S3)
-        }
-        // unreadable
-        else if len <= Duration::from_secs_f64(L4) {
-            let skip = math::lerp(L3, L4, S3, S4, len.as_secs_f64());
-            let skip = Duration::from_secs_f64(skip);
-            skip
-        }
-        // otherwise
-        else {
-            Duration::from_secs_f64(S4)
-        };
+        // Very short videos are unlikey to have intros and outros
+        line.add_flat(duration!(30 S), duration!(0 S)).unwrap();
+
+        // Skips short intros, like the one from PH
+        line.add_flat(duration!(1 M), duration!(5 S)).unwrap();
+
+        // Skips the annoying commercial segment at the beginning from SP, and also
+        // slightly longer intros from well known studios
+        line.add_linear(duration!(5 M), duration!(1 M, 15 S))
+            .unwrap();
+
+        // Some have long trailers at the end
+        line.add_flat(duration!(35 M), duration!(4 M)).unwrap();
+
+        // DVDs have long intros
+        line.add_flat(duration!(1 H), duration!(10 M)).unwrap();
+
+        let skip = line.sample(len);
         (skip, skip)
     }
 
