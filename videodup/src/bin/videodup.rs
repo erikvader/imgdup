@@ -542,16 +542,15 @@ mod video {
     }
 
     fn skip_beg_end(len: Duration) -> (Duration, Duration) {
+        // Very short videos are unlikey to have intros and outros
         let mut line = Timeline::new_zero();
 
-        // Very short videos are unlikey to have intros and outros
-        line.add_flat(duration!(30 S), duration!(0 S)).unwrap();
-
         // Skips short intros, like the one from PH
-        line.add_flat(duration!(1 M), duration!(5 S)).unwrap();
+        line.add_flat(duration!(30 S), duration!(5 S)).unwrap();
 
         // Skips the annoying commercial segment at the beginning from SP, and also
         // slightly longer intros from well known studios
+        line.add_flat(duration!(1 M), duration!(5 S)).unwrap();
         line.add_linear(duration!(5 M), duration!(1 M, 15 S))
             .unwrap();
 
@@ -563,6 +562,24 @@ mod video {
 
         let skip = line.sample(len);
         (skip, skip)
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn sanity_check_skip_beg_end() {
+            assert_eq!(duration!(0 S), skip_beg_end(duration!(5 S)).0);
+            assert_eq!(duration!(5 S), skip_beg_end(duration!(50 S)).0);
+            assert!({
+                let skip = skip_beg_end(duration!(1 M, 50 S)).0;
+                skip > duration!(5 S) && skip < duration!(1 M, 15 S)
+            });
+            assert_eq!(duration!(1 M, 15 S), skip_beg_end(duration!(10 M)).0);
+            assert_eq!(duration!(4 M), skip_beg_end(duration!(40 M)).0);
+            assert_eq!(duration!(10 M), skip_beg_end(duration!(2 H)).0);
+        }
     }
 
     fn estimated_num_of_frames(video_length: Duration, step: Duration) -> usize {

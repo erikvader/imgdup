@@ -20,6 +20,7 @@ enum Curve {
 }
 
 impl Timeline {
+    /// Creates a new timeline starting at `(origin_x, origin_y)`
     pub fn new(origin_x: X, origin_y: Y) -> Self {
         Self {
             points: vec![Point {
@@ -30,10 +31,12 @@ impl Timeline {
         }
     }
 
+    /// Creates a new timeline starting at `(0, 0)`
     pub fn new_zero() -> Self {
         Self::new(X::ZERO, Y::ZERO)
     }
 
+    /// Samples a point at `x`, returning the corresponding `y`
     pub fn sample(&self, x: X) -> Y {
         {
             let first = self.points.first().expect("is non-empty");
@@ -42,7 +45,7 @@ impl Timeline {
             }
         }
 
-        let Some(next) = self.points.iter().position(|p| p.x >= x) else {
+        let Some(next) = self.points.iter().position(|p| p.x > x) else {
             return self.points.last().expect("is non-empty").y;
         };
         assert!(next >= 1, "x is strictly larger than the first one");
@@ -52,7 +55,7 @@ impl Timeline {
         let prev = self.points.get(prev).expect("exists");
 
         match next.curve {
-            Curve::Flat => next.y,
+            Curve::Flat => prev.y,
             Curve::Linear => {
                 let nanos = lerp_u128(
                     prev.x.as_nanos(),
@@ -68,6 +71,7 @@ impl Timeline {
         }
     }
 
+    /// All sampled values from `x` and onward will be `y`, pretty much
     pub fn add_flat(&mut self, x: X, y: Y) -> Result<(), ()> {
         self.add(Point {
             x,
@@ -76,6 +80,7 @@ impl Timeline {
         })
     }
 
+    /// Sampled values between the last point and `x` will increase linearly to `y`
     pub fn add_linear(&mut self, x: X, y: Y) -> Result<(), ()> {
         self.add(Point {
             x,
@@ -198,9 +203,9 @@ mod test {
         assert_eq!(duration!(0 M), line.sample(X::ZERO));
         assert_eq!(duration!(2 S), line.sample(duration!(500 MS)));
         assert_eq!(duration!(4 S), line.sample(duration!(1 S)));
-        assert_eq!(duration!(40 S), line.sample(duration!(1500 MS)));
+        assert_eq!(duration!(4 S), line.sample(duration!(1500 MS)));
         assert_eq!(duration!(40 S), line.sample(duration!(2 S)));
-        assert_eq!(duration!(60 S), line.sample(duration!(2200 MS)));
+        assert_eq!(duration!(40 S), line.sample(duration!(2200 MS)));
         assert_eq!(duration!(60 S), line.sample(duration!(2500 MS)));
         assert_eq!(duration!(30 S), line.sample(duration!(2750 MS)));
         assert_eq!(duration!(0 S), line.sample(duration!(3 S)));
@@ -219,5 +224,34 @@ mod test {
         assert_eq!(duration!(0 S), line.sample(duration!(3 S)));
         assert_eq!(duration!(0 S), line.sample(duration!(4 S)));
         assert_eq!(duration!(0 S), line.sample(duration!(5 S)));
+    }
+
+    #[test]
+    fn linear_plateu() {
+        let mut line = Timeline::new_zero();
+        line.add_flat(duration!(4 S), duration!(0 S)).unwrap();
+        line.add_linear(duration!(6 S), duration!(30 S)).unwrap();
+
+        assert_eq!(duration!(0 S), line.sample(duration!(0 S)));
+        assert_eq!(duration!(0 S), line.sample(duration!(1 S)));
+        assert_eq!(duration!(0 S), line.sample(duration!(4 S)));
+        assert_eq!(duration!(15 S), line.sample(duration!(5 S)));
+        assert_eq!(duration!(30 S), line.sample(duration!(6 S)));
+        assert_eq!(duration!(30 S), line.sample(duration!(7 S)));
+    }
+
+    #[test]
+    fn double_linear() {
+        let mut line = Timeline::new_zero();
+        line.add_linear(duration!(2 S), duration!(2 S)).unwrap();
+        line.add_linear(duration!(6 S), duration!(30 S)).unwrap();
+
+        assert_eq!(duration!(0 S), line.sample(duration!(0 S)));
+        assert_eq!(duration!(500 MS), line.sample(duration!(500 MS)));
+        assert_eq!(duration!(1 S), line.sample(duration!(1 S)));
+        assert_eq!(duration!(2 S), line.sample(duration!(2 S)));
+        assert_eq!(duration!(16 S), line.sample(duration!(4 S)));
+        assert_eq!(duration!(30 S), line.sample(duration!(6 S)));
+        assert_eq!(duration!(30 S), line.sample(duration!(7 S)));
     }
 }
