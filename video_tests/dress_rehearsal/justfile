@@ -5,7 +5,7 @@
 # - Only one collision per frame, not two, where two mirrored frames match each other.
 # - Two identical videos shall have many collisions
 
-import '../lib.just'
+import '../../lib.just'
 
 default:
     @just --list --justfile '{{justfile()}}'
@@ -20,15 +20,15 @@ mkdirs:
 run: reset videodup debug
 
 videodup: mkdirs
-    {{rootjust}} run release videodup
+    {{cargo-run}} videodup
 
 debug:
-    {{rootjust}} run release videodup-debug --all --root . --entry-dir _DUPS_
+    {{cargo-run}} videodup-debug -- --all --root . --entry-dir _DUPS_
 
 # Manual debugging and testing
 
 list:
-    {{rootjust}} run release videodup-edit --database-file videodup.db stats list:list.txt
+    {{cargo-run}} videodup-edit -- --database-file videodup.db stats list:list.txt
 
 randel:
-    {{rootjust}} run release videodup-edit --database-file videodup.db randel:2
+    {{cargo-run}} videodup-edit -- --database-file videodup.db randel:2

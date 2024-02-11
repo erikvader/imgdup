@@ -1,4 +1,4 @@
-import '../lib.just'
+import '../../lib.just'
 
 default:
     @just --list --justfile '{{justfile()}}'
@@ -12,37 +12,37 @@ videovertical := 'vertical-5hImWP9_h_0.mkv'
 # - The width is not a multiple of 16, so there is padding in the RGB buffer
 # - The video stream's duration is AV_NOPTS_VALUE
 run-vertical:
-    {{rootjust}} run release frame_extractor --outdir frames_vertical --num 1 "{{videovertical}}"
+    {{cargo-run}} frame_extractor -- --outdir frames_vertical --num 1 "{{videovertical}}"
 
 videofaulty := 'faulty_[gsmisy].mp4'
 # There are missing frames at around 00:10:40
 run-faulty:
-    {{rootjust}} run release frame_extractor --offset '10min 43s' --step 0s --outdir frames_faulty --num 30 "{{videofaulty}}"
+    {{cargo-run}} frame_extractor -- --offset '10min 43s' --step 0s --outdir frames_faulty --num 30 "{{videofaulty}}"
 
 videoanalyze := 'more_analyze_ganme2_000.mp4'
 # This video needed a larger analyzeduration to find streams info
 run-analyze:
-    {{rootjust}} run release frame_extractor --outdir frames_analyze --num 1 "{{videoanalyze}}"
+    {{cargo-run}} frame_extractor -- --outdir frames_analyze --num 1 "{{videoanalyze}}"
 
 videoinvalid := 'invalid_data.wmv'
 # This video has invalid data at around 00:06:10, which needs to be skipped
 run-invalid:
-    {{rootjust}} run release frame_extractor --step 1s --offset '6min 10s' --outdir frames_invalid --num 20 "{{videoinvalid}}"
+    {{cargo-run}} frame_extractor -- --step 1s --offset '6min 10s' --outdir frames_invalid --num 20 "{{videoinvalid}}"
 
 videooriented := '2018-12-28 1228 IMG_0640.MOV'
 # This video contains orientation metadata, the frames are rotated 90 degrees.
 # Will output unrelated errors like: hevc: Could not find ref with POC 28
 run-oriented:
-    {{rootjust}} run release frame_extractor --step 1s --outdir frames_orientation --num 1 "{{videooriented}}"
+    {{cargo-run}} frame_extractor -- --step 1s --outdir frames_orientation --num 1 "{{videooriented}}"
 
 videonotimestamps := 'Gigant 121.avi'
 # This video's last frame doesn't have a timestamp, and it seems like it doesn't belong to
 # the video. Shouldn't panic.
 run-notimestamps:
-    {{rootjust}} run release frame_extractor --step 1s --outdir frames_notimestamp --num 20 --offset '4h 1min 20s' "{{videonotimestamps}}"
+    {{cargo-run}} frame_extractor -- --step 1s --outdir frames_notimestamp --num 20 --offset '4h 1min 20s' "{{videonotimestamps}}"
 
 videonoend := 'giddlp.mp4'
 # This video is corrupt, so ffmpeg can't figure out its estimated duration and panics.
 # The extractor should fail with "no duration" and not panic.
 run-noend:
-    -{{rootjust}} run release frame_extractor --step 1s --outdir frames_noend --num 2 "{{videonoend}}"
+    -{{cargo-run}} frame_extractor -- --step 1s --outdir frames_noend --num 2 "{{videonoend}}"

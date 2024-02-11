@@ -1,7 +1,7 @@
-import '../lib.just'
+import '../../lib.just'
 
 default:
     @just --list --justfile '{{justfile()}}'
 
 run:
-    {{rootjust}} run release blandness bland/* interesting/* 2>/dev/null
+    {{cargo-run}} blandness -- bland/* interesting/* 2>/dev/null

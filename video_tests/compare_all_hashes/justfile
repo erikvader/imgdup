@@ -1,12 +1,12 @@
 # Compares images to get a feel for hash algorithm performance
 
-import '../lib.just'
+import '../../lib.just'
 
 default:
     @just --list --justfile '{{justfile()}}'
 
 run:
-    {{rootjust}} run release pic_comparator -c 34 frames frames2
+    {{cargo-run}} pic_comparator -- -c 34 frames frames2
 
 # Extracts a random frame from each video in the folder given as the first argument
 get-frames $VIDEOS:
@@ -26,7 +26,7 @@ get-frames $VIDEOS:
             echo this already exists
             exit 1
         fi
-        {{rootjust}} run release random_frame "$line" "$outpath"
+        {{cargo-run}} random_frame -- "$line" "$outpath"
         if [[ ! -e $outpath ]]; then
             echo did not write anything
             exit 1

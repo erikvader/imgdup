@@ -36,7 +36,7 @@ CARGO_FEATURE_STATIC = "yes"
 CARGO_FEATURE_BUILD = "yes"
 ```
 
-## Compile and link dynamically
+## Compile and link dynamically _(deprecated)_
 Another option is to compile FFmpeg normally and install it locally in
 this repo (or somewhere else) and point to it somehow when executing
 the binary. There is a [justfile](https://github.com/casey/just)

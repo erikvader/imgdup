@@ -1,4 +1,4 @@
-import '../lib.just'
+import '../../lib.just'
 
 default:
     @just --list --justfile '{{justfile()}}'
@@ -18,13 +18,13 @@ run: reset run-normal run-shifted run-last
 
 # 10 frames with the timer in the images counting up from 0
 run-normal:
-    {{rootjust}} run release frame_extractor --step 1s --outdir frames_normal --num 10 "{{videonormal}}"
+    {{cargo-run}} frame_extractor -- --step 1s --outdir frames_normal --num 10 "{{videonormal}}"
 
 # 10 frames with the timer in the images counting up from 5, but the timestamp in the
 # filename starts at 0.
 run-shifted:
-    {{rootjust}} run release frame_extractor --step 1s --outdir frames_shifted --num 10 "{{videoshifted}}"
+    {{cargo-run}} frame_extractor -- --step 1s --outdir frames_shifted --num 10 "{{videoshifted}}"
 
 # Make sure the very last frame can be extracted
 run-last:
-    {{rootjust}} run release frame_extractor --step 0s --outdir frames_last --offset '9min 58s' --num 10000 "{{videonormal}}"
+    {{cargo-run}} frame_extractor -- --step 0s --outdir frames_last --offset '9min 58s' --num 10000 "{{videonormal}}"
