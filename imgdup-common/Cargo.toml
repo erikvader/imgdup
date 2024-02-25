@@ -7,7 +7,10 @@ edition = "2021"
 thiserror.workspace = true
 color-eyre.workspace = true
 log.workspace = true
-simplelog.workspace = true
+time.workspace = true
+fern.workspace = true
+owo-colors.workspace = true
+supports-color.workspace = true
 
 plotters.workspace = true
 

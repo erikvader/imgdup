@@ -11,7 +11,10 @@ resolver = "2"
 thiserror = "1"
 color-eyre = {version = "0.6", default-features = false}
 log = "0.4"
-simplelog = "0.12"
+fern = "0.6"
+time = {version = "0.3", features = ["local-offset", "formatting", "macros"]}
+owo-colors = "4.0"
+supports-color = "3.0"
 
 # For plotting perf.rs and stuff (and generating imgdup debug info?)
 # TODO: reduce features

@@ -1,10 +1,11 @@
-use std::{fs::File, path::Path};
+use std::path::Path;
 
 use color_eyre::{
     config::{HookBuilder, Theme},
     eyre::{self, Context},
 };
-use simplelog::*;
+use owo_colors::{OwoColorize, Style};
+use time::{OffsetDateTime, UtcOffset};
 
 pub fn init_eyre() -> eyre::Result<()> {
     let eyre_color = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
@@ -32,59 +33,72 @@ pub fn init_eyre() -> eyre::Result<()> {
 }
 
 pub fn init_logger(logfile: Option<&Path>) -> eyre::Result<()> {
-    let mut builder = ConfigBuilder::new();
-    builder.set_thread_level(LevelFilter::Error);
-    builder.set_target_level(LevelFilter::Error);
-    builder.set_location_level(LevelFilter::Trace);
-
-    builder.set_level_padding(LevelPadding::Right);
-    builder.set_thread_padding(ThreadPadding::Right(3));
-
-    builder.set_thread_mode(ThreadLogMode::Both);
-
-    // NOTE: set_time_offset_to_local can only be run when there is only on thread active.
-    let timezone_failed = builder.set_time_offset_to_local().is_err();
-
-    let level = LevelFilter::Debug;
-    let log_color = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        ColorChoice::Auto
-    } else {
-        ColorChoice::Never
-    };
-
-    let mut loggers: Vec<Box<dyn SharedLogger>> = vec![TermLogger::new(
-        level,
-        builder.build(),
-        TerminalMode::Stdout,
-        log_color,
-    )];
-
-    let logfile_failed = logfile.and_then(|logfile| match File::create(logfile) {
-        Ok(f) => {
-            loggers.push(WriteLogger::new(level, builder.build(), f));
-            None
-        }
-        Err(e) => Some(e),
-    });
-
-    CombinedLogger::init(loggers).wrap_err("Failed to set the logger")?;
-
-    if timezone_failed {
-        log::error!(
-            "Failed to set time zone for the logger, using UTC instead (I think)"
-        );
-    }
+    let mut dispatch = fern::Dispatch::new().level(log::LevelFilter::Trace).chain(
+        fern::Dispatch::new()
+            .format(format_callback(
+                supports_color::on(supports_color::Stream::Stdout)
+                    .is_some_and(|support| support.has_basic),
+            ))
+            .chain(std::io::stdout()),
+    );
 
     if let Some(logfile) = logfile {
-        if let Some(e) = logfile_failed {
-            log::error!(
-                "Failed to create the log file at '{}' because: {e}",
-                logfile.display()
-            );
-        } else {
-            log::debug!("Logging to: {}", logfile.display());
-        }
+        dispatch =
+            dispatch.chain(fern::Dispatch::new().format(format_callback(false)).chain(
+                fern::log_file(logfile).wrap_err_with(|| {
+                    format!("failed to open the log file at: {logfile:?}")
+                })?,
+            ));
     }
 
+    dispatch.apply().wrap_err("failed to set the logger")?;
+
     Ok(())
+}
+
+fn format_callback(
+    color: bool,
+) -> impl Fn(fern::FormatCallback<'_>, &std::fmt::Arguments<'_>, &log::Record<'_>)
+       + Sync
+       + Send
+       + 'static {
+    let utc_offset = match UtcOffset::current_local_offset() {
+        Ok(offset) => offset,
+        Err(e) => {
+            eprintln!("Failed to get the current UTC offset: {e:?}");
+            UtcOffset::UTC
+        }
+    };
+    let format = time::macros::format_description!(
+        "[hour repr:24]:[minute]:[second].[subsecond digits:6]"
+    );
+
+    move |out, message, record| {
+        let now = OffsetDateTime::now_utc().to_offset(utc_offset).time();
+        let style = if color {
+            level_style(record.level())
+        } else {
+            Style::new()
+        };
+
+        out.finish(format_args!(
+            "{} ({}) [{:<5}] {}: {}",
+            now.format(format)
+                .unwrap_or_else(|_| "??:??:??.??????".into()),
+            std::thread::current().name().unwrap_or("??"),
+            record.level().to_string().style(style),
+            record.target(),
+            message.style(style),
+        ))
+    }
+}
+
+fn level_style(level: log::Level) -> Style {
+    match level {
+        log::Level::Error => Style::new().bright_red().bold(),
+        log::Level::Warn => Style::new().bright_yellow().bold(),
+        log::Level::Info => Style::new().bright_white().bold(),
+        log::Level::Debug => Style::new().white(),
+        log::Level::Trace => Style::new().dimmed(),
+    }
 }
