@@ -1,9 +1,11 @@
 # Will do exactly the same thing as the real deal, but with fewer video files.
 # Expected results:
+# - Nothing in the buffer folder should be a duplicate of anything.
 # - The ignored frame(s) should show up in the graveyard.
-# - One dup should appear.
-# - Only one collision per frame, not two, where two mirrored frames match each other.
-# - Two identical videos shall have many collisions
+# - Only one collision per frame, not two, i.e. no two mirrored frames match each other.
+# - The two identical videos 'identical' shall have many collisions since its the exact same video.
+# - The videos 'trailers' shall not have any collisions, the trailers at the end should be ignored.
+# - The videos 'phase' shall be duplicates of each other, they are out of phase and are thus tricky.
 
 import '../../lib.just'
 
@@ -11,13 +13,13 @@ default:
     @just --list --justfile '{{justfile()}}'
 
 # Removes all generated files
-reset:
-    rm -vrf videodup.db videodup.db.backup _DUPS_ _GRAVEYARD_ list.txt
+clean:
+    rm -vrf videodup.db videodup.db.backup _DUPS_ _GRAVEYARD_ list.txt logs.log
 
 mkdirs:
     mkdir -p _GRAVEYARD_ _DUPS_
 
-run: reset videodup debug
+run: clean videodup debug
 
 videodup: mkdirs
     {{cargo-run}} videodup
