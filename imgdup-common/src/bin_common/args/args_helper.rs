@@ -141,8 +141,13 @@ mod test {
         let auto = Cmd::try_parse_from(["", "--hej", "1"]).unwrap().auto;
         assert_eq!(vec![1], auto.hej);
 
+        let auto = Cmd::try_parse_from(["", "--hej", "1", "5"]).unwrap().auto;
+        assert_eq!(vec![1, 5], auto.hej);
+
         let auto = Cmd::try_parse_from(["", "--hej"]).unwrap().auto;
         assert_eq!(Vec::<i32>::new(), auto.hej);
+
+        assert!(Cmd::try_parse_from(["", "--hej", ""]).is_err());
 
         let auto = Cmd::try_parse_from(["", "--hej", "--yas", "78"])
             .unwrap()
