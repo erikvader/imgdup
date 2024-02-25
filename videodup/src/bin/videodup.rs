@@ -555,7 +555,7 @@ mod video {
             .unwrap();
 
         // Some have long trailers at the end
-        line.add_flat(duration!(35 M), duration!(4 M)).unwrap();
+        line.add_flat(duration!(32 M), duration!(4 M)).unwrap();
 
         // DVDs have long intros
         line.add_flat(duration!(1 H), duration!(10 M)).unwrap();
