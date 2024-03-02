@@ -4,8 +4,7 @@ use color_eyre::{
     config::{HookBuilder, Theme},
     eyre::{self, Context},
 };
-use owo_colors::{OwoColorize, Style};
-use time::{OffsetDateTime, UtcOffset};
+use fern_format::{Format, Stream};
 
 pub fn init_eyre() -> eyre::Result<()> {
     let eyre_color = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
@@ -35,70 +34,26 @@ pub fn init_eyre() -> eyre::Result<()> {
 pub fn init_logger(logfile: Option<&Path>) -> eyre::Result<()> {
     let mut dispatch = fern::Dispatch::new().level(log::LevelFilter::Trace).chain(
         fern::Dispatch::new()
-            .format(format_callback(
-                supports_color::on(supports_color::Stream::Stdout)
-                    .is_some_and(|support| support.has_basic),
-            ))
+            .format(
+                Format::new()
+                    .color_if_supported(Stream::Stdout)
+                    .uniquely_color_threads()
+                    .callback(),
+            )
             .chain(std::io::stdout()),
     );
 
     if let Some(logfile) = logfile {
-        dispatch =
-            dispatch.chain(fern::Dispatch::new().format(format_callback(false)).chain(
-                fern::log_file(logfile).wrap_err_with(|| {
+        dispatch = dispatch.chain(
+            fern::Dispatch::new()
+                .format(Format::new().thread_names().callback())
+                .chain(fern::log_file(logfile).wrap_err_with(|| {
                     format!("failed to open the log file at: {logfile:?}")
-                })?,
-            ));
+                })?),
+        );
     }
 
     dispatch.apply().wrap_err("failed to set the logger")?;
 
     Ok(())
-}
-
-fn format_callback(
-    color: bool,
-) -> impl Fn(fern::FormatCallback<'_>, &std::fmt::Arguments<'_>, &log::Record<'_>)
-       + Sync
-       + Send
-       + 'static {
-    let utc_offset = match UtcOffset::current_local_offset() {
-        Ok(offset) => offset,
-        Err(e) => {
-            eprintln!("Failed to get the current UTC offset: {e:?}");
-            UtcOffset::UTC
-        }
-    };
-    let format = time::macros::format_description!(
-        "[hour repr:24]:[minute]:[second].[subsecond digits:6]"
-    );
-
-    move |out, message, record| {
-        let now = OffsetDateTime::now_utc().to_offset(utc_offset).time();
-        let style = if color {
-            level_style(record.level())
-        } else {
-            Style::new()
-        };
-
-        out.finish(format_args!(
-            "{} ({}) [{:<5}] {}: {}",
-            now.format(format)
-                .unwrap_or_else(|_| "??:??:??.??????".into()),
-            std::thread::current().name().unwrap_or("??"),
-            record.level().to_string().style(style),
-            record.target(),
-            message.style(style),
-        ))
-    }
-}
-
-fn level_style(level: log::Level) -> Style {
-    match level {
-        log::Level::Error => Style::new().bright_red().bold(),
-        log::Level::Warn => Style::new().bright_yellow().bold(),
-        log::Level::Info => Style::new().bright_white().bold(),
-        log::Level::Debug => Style::new().white(),
-        log::Level::Trace => Style::new().dimmed(),
-    }
 }

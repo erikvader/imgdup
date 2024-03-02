@@ -689,6 +689,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fern-format"
+version = "0.1.0"
+source = "git+https://github.com/erikvader/fern-format.git?tag=0.2.0#bb5fd89ee74ae50510453b3a011e63ab496b5366"
+dependencies = [
+ "fern",
+ "log",
+ "owo-colors 4.0.0",
+ "supports-color",
+ "time 0.3.26",
+]
+
+[[package]]
 name = "ffmpeg-next"
 version = "6.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -984,22 +996,20 @@ dependencies = [
  "color-eyre",
  "derivative",
  "fern",
+ "fern-format",
  "humantime",
  "image",
  "image_hasher",
  "log",
  "memmap2",
- "owo-colors 4.0.0",
  "plotters",
  "rand",
  "replace_with",
  "rkyv",
  "serde",
  "signal-hook",
- "supports-color",
  "tempfile",
  "thiserror",
- "time 0.3.26",
 ]
 
 [[package]]
