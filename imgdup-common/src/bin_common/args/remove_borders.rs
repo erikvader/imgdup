@@ -1,4 +1,7 @@
-use crate::utils::imgutils::{maskify, watermark_getbbox, Mask};
+use crate::utils::{
+    imgutils::{maskify, watermark_getbbox, Mask},
+    percent::Percent64,
+};
 
 use super::args_helper::args;
 use image::{imageops::crop_imm, GrayImage, RgbImage, SubImage};
@@ -12,7 +15,7 @@ args! {
         remove_borders_maskify_threshold: u8 = 40;
 
         "A mask line can contain this many percent of white and still be considered black"
-        remove_borders_maximum_whites: f64 = 0.1;
+        remove_borders_maximum_whites: Percent64 = 10.0.try_into().unwrap();
     }
 }
 

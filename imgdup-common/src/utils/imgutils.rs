@@ -7,6 +7,7 @@ use image::{
 pub use image::imageops::colorops::grayscale;
 
 use super::math::{Average, Variance};
+use super::percent::Percent64;
 
 pub const WHITE: u8 = u8::MAX;
 pub const BLACK: u8 = u8::MIN;
@@ -70,7 +71,7 @@ pub fn maskify(mut img: GrayImage, threshold: u8) -> Mask {
     Mask(img)
 }
 
-pub fn percent_gray<I>(img: &I, color: Luma<u8>, tolerance: u8) -> f64
+pub fn percent_gray<I>(img: &I, color: Luma<u8>, tolerance: u8) -> Percent64
 where
     I: GenericImageView<Pixel = Luma<u8>>,
 {
@@ -80,14 +81,14 @@ where
         .count();
 
     let total = img.width() * img.height();
-    100.0 * (within_tolerance as f64) / (total as f64)
+    Percent64::of(within_tolerance as f64, total as f64)
+        .expect("both numbers are positive")
 }
 
 // TODO: use https://crates.io/crates/nalgebra or https://crates.io/crates/ndarray instead
 // of manually looping to speed things up?
-pub fn watermark_getbbox(mask: &Mask, maximum_whites: f64) -> Rect {
+pub fn watermark_getbbox(mask: &Mask, maximum_whites: Percent64) -> Rect {
     let mask = &mask.0;
-    let maximum_whites = maximum_whites.max(0.0);
 
     let mut columns = vec![0; mask.width() as usize];
     let mut rows = vec![0; mask.height() as usize];
@@ -109,7 +110,10 @@ pub fn watermark_getbbox(mask: &Mask, maximum_whites: f64) -> Rect {
         let axle_max = axle_max as f64;
         axle.iter()
             .enumerate()
-            .skip_while(|(_, &w)| ((w as f64) / axle_max) <= maximum_whites)
+            .skip_while(|(_, &w)| {
+                Percent64::of(w as f64, axle_max).expect("both args are positive")
+                    <= maximum_whites
+            })
             .map(|(i, _)| i as u32)
             .next()
     };
@@ -251,7 +255,7 @@ mod test {
         let mask = maskify(grayscale(&black), 0);
         assert!(mask.0.pixels().all(|p| p[0] == BLACK));
 
-        let bbox = watermark_getbbox(&mask, 0.0);
+        let bbox = watermark_getbbox(&mask, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 0,
@@ -270,7 +274,7 @@ mod test {
     #[test]
     fn bbox_white() {
         let img = Mask(construct_gray(&[&[WHITE, WHITE, WHITE]]));
-        let bbox = watermark_getbbox(&img, 0.0);
+        let bbox = watermark_getbbox(&img, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 0,
@@ -287,7 +291,7 @@ mod test {
         let img = construct_gray(&[]);
         assert!(is_img_empty(&img));
         let img = Mask(img);
-        let bbox = watermark_getbbox(&img, 0.0);
+        let bbox = watermark_getbbox(&img, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 0,
@@ -307,7 +311,7 @@ mod test {
             &[BLACK, WHITE, WHITE, WHITE],
             &[BLACK, WHITE, WHITE, WHITE],
         ]));
-        let bbox = watermark_getbbox(&img, 0.0);
+        let bbox = watermark_getbbox(&img, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 1,
@@ -327,7 +331,7 @@ mod test {
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
         ]));
-        let bbox = watermark_getbbox(&img, 0.0);
+        let bbox = watermark_getbbox(&img, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 0,
@@ -347,7 +351,7 @@ mod test {
             &[WHITE, WHITE, WHITE, BLACK],
             &[WHITE, WHITE, WHITE, BLACK],
         ]));
-        let bbox = watermark_getbbox(&img, 0.0);
+        let bbox = watermark_getbbox(&img, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 0,
@@ -367,7 +371,7 @@ mod test {
             &[BLACK, WHITE, WHITE, BLACK],
             &[BLACK, BLACK, BLACK, BLACK],
         ]));
-        let bbox = watermark_getbbox(&img, 0.0);
+        let bbox = watermark_getbbox(&img, Percent64::ZERO);
         assert_eq!(
             Rect {
                 x: 1,

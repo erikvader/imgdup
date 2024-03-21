@@ -1,7 +1,8 @@
 pub mod fsutils;
 pub mod imgutils;
 pub mod math;
-pub mod perf; // TODO: implement
+pub mod percent;
+pub mod perf; // TODO: implement // TODO: just use tracing crate instead?
 pub mod plot;
 pub mod repo;
 pub mod simple_path;
