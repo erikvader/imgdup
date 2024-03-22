@@ -4,4 +4,4 @@ default:
     @just --list --justfile '{{justfile()}}'
 
 run:
-    {{cargo-run}} blandness -- bland/* interesting/* 2>/dev/null
+    {{cargo-run}} blandness -- bland/* interesting/* should/* 2>/dev/null

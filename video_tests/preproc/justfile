@@ -4,4 +4,9 @@ default:
     @just --list --justfile '{{justfile()}}'
 
 run:
-    {{cargo-run}} preproc -- bland/* interesting/*
+    {{cargo-run}} preproc -- bland/* interesting/* should/*
+
+# bland: pictures that someday should be non-ok
+# interesting: pictures that are ok
+# should: pictures that are non-ok
+# todo: have not investigated yet

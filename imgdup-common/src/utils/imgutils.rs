@@ -138,6 +138,12 @@ pub fn watermark_getbbox(mask: &Mask, maximum_whites: Percent64) -> Rect {
     }
 }
 
+pub fn subimg_coverage<T: GenericImageView>(img: &SubImage<&T>) -> Percent64 {
+    let total = img.inner().width() * img.inner().height();
+    let cover = (*img).width() * (*img).height();
+    Percent64::of(cover as f64, total as f64).expect("both args are positive")
+}
+
 pub fn is_subimg_empty<T: GenericImageView>(img: &SubImage<&T>) -> bool {
     is_img_empty(&**img)
 }
@@ -241,10 +247,20 @@ mod test {
         assert_eq!(128, most_common_gray(&img1)[0]);
 
         let exact = percent_gray(&img1, Luma([128]), 0);
-        assert!(exact >= 63.0 && exact <= 69.0);
+        assert_eq!(67, exact.round());
 
         let all = percent_gray(&img1, Luma([128]), 100);
-        assert!(all >= 97.0 && all <= 103.0);
+        assert_eq!(100, all.round());
+    }
+
+    #[test]
+    fn subimg_coverage_test() {
+        let black = filled(50, 50, 0, 0, 0);
+        let sub = black.view(0, 0, 25, 25);
+        assert_eq!(25, subimg_coverage(&sub).round());
+
+        let sub = black.view(0, 0, 0, 0);
+        assert_eq!(0, subimg_coverage(&sub).round());
     }
 
     #[test]

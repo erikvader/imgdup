@@ -25,6 +25,10 @@ impl Percent64 {
     pub fn of(part: f64, total: f64) -> Result<Self, PercentError> {
         Self::new(100.0 * part / total)
     }
+
+    pub fn round(self) -> u32 {
+        self.0.round() as u32
+    }
 }
 
 impl From<Percent64> for f64 {

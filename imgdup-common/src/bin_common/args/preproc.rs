@@ -2,7 +2,7 @@ use image::{imageops::grayscale, RgbImage, SubImage};
 
 use crate::{
     imghash::{hamming::Hamming, imghash},
-    utils::imgutils,
+    utils::{imgutils, percent::Percent64},
 };
 
 use super::{args_helper::args, one_color::OneColor, remove_borders::RemoveBorders};
@@ -11,6 +11,10 @@ args! {
     Preproc {
         border_args: RemoveBorders;
         one_color_args: OneColor;
+
+        "If only this many percent of the image is left after preprocessing, then \
+         its considered empty."
+        emptiness_threshold: Percent64 = 10.0.try_into().unwrap();
     }
 }
 
@@ -45,7 +49,7 @@ impl Preproc {
 
         let mask = self.border_args.maskify(gray);
         let no_borders = self.border_args.remove_borders_mask(img, &mask);
-        if imgutils::is_subimg_empty(&no_borders) {
+        if imgutils::subimg_coverage(&no_borders) <= self.emptiness_threshold {
             return Err(PreprocError::Empty);
         }
 

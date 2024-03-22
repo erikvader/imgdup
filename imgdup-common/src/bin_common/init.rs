@@ -7,6 +7,7 @@ use color_eyre::{
 use fern_format::{Format, Stream};
 
 pub fn init_eyre() -> eyre::Result<()> {
+    // TODO: env::set_var("RUST_BACKTRACE", "1");
     let eyre_color = if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
         Theme::dark()
     } else {
