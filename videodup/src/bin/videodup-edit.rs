@@ -40,6 +40,7 @@ enum Goal {
 
 fn goal_parser(s: &str) -> Result<Goal, String> {
     let parts: Vec<_> = s.split(':').collect();
+    // TODO: remove a single file
     match &parts[..] {
         &["stats"] => Ok(Goal::Stats),
         &["rebuild"] => Ok(Goal::Rebuild),

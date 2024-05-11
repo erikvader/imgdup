@@ -48,6 +48,8 @@ use videodup::{
 /// Finds duplicate videos.
 ///
 /// This uses rayon, so the `RAYON_NUM_THREADS` environment variable might be of interest.
+///
+/// The root of all relative paths is the current working directory.
 struct Cli {
     #[command(flatten)]
     simi_args: Simi,

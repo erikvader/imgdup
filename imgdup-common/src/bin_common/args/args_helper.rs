@@ -26,7 +26,7 @@ macro_rules! args {
     (@arms ($name:ident: $type:ty; $($rest:tt)*) ->
      ($($carry:tt)*) ($($sb:tt)*) ($($db:tt)*) ($($se:tt)*)) =>
     {
-        $crate::args!(@arms ($($rest)*) ->
+        args!(@arms ($($rest)*) ->
                ($($carry)*)
                ($($sb)*
                 #[command(flatten)]
@@ -44,7 +44,7 @@ macro_rules! args {
     (@arms ($help:literal $name:ident: $container:tt<$type:ty> []= $default:expr; $($rest:tt)*) ->
      ($($carry:tt)*) ($($sb:tt)*) ($($db:tt)*) ($($se:tt)*)) =>
     {
-        $crate::args!(@arms ($($rest)*) ->
+        args!(@arms ($($rest)*) ->
                ($($carry)*)
                ($($sb)*
                 #[arg(long, num_args = 0.., default_values_t = $default, help = $help)]
@@ -63,7 +63,7 @@ macro_rules! args {
     (@arms ($help:literal $name:ident: $type:ty = $default:expr; $($rest:tt)*) ->
      ($($carry:tt)*) ($($sb:tt)*) ($($db:tt)*) ($($se:tt)*)) =>
     {
-        $crate::args!(@arms ($($rest)*) ->
+        args!(@arms ($($rest)*) ->
                ($($carry)*)
                ($($sb)*
                 #[arg(long, default_value_t = $default, help = $help)]
@@ -80,7 +80,7 @@ macro_rules! args {
     // Start here
     ($(#[$meta:meta])* $name:ident {$($rest:tt)*}) =>
     {
-        $crate::args!(@arms ($($rest)*) -> ($(#[$meta])* $name) () () ());
+        args!(@arms ($($rest)*) -> ($(#[$meta])* $name) () () ());
     };
 }
 
