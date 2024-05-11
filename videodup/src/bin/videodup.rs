@@ -621,8 +621,8 @@ mod tree {
         log::debug!("Tree worker working");
 
         while let Ok(Payload { video_path, hashes }) = rx.recv() {
-            if ctx.term_cookie.is_terminating() {
-                log::warn!("Termination signal received");
+            if ctx.term_cookie.is_terminating_hard() {
+                log::warn!("Hard termination signal received");
                 break;
             }
 
