@@ -8,7 +8,9 @@ use imgdup_common::{
     utils::simple_path::{SimplePath, SimplePathBuf},
 };
 
-#[derive(Serialize, Archive, Clone, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Serialize, Archive, Clone, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 #[archive(check_bytes)]
 pub struct VidSrc {
     frame_pos: Timestamp,
@@ -16,7 +18,18 @@ pub struct VidSrc {
     mirrored: Mirror,
 }
 
-#[derive(Serialize, Archive, Copy, Clone, Hash, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Serialize,
+    Archive,
+    Copy,
+    Clone,
+    Hash,
+    PartialEq,
+    Eq,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[archive(check_bytes)]
 pub enum Mirror {
     Normal,
@@ -82,6 +95,7 @@ impl ArchivedVidSrc {
         }
     }
 
+    // TODO: figure out of rkyv deserialize works and use that instead
     pub fn deserialize(&self) -> VidSrc {
         VidSrc {
             frame_pos: self.frame_pos.deserialize(),

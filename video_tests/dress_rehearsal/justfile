@@ -14,7 +14,7 @@ default:
 
 # Removes all generated files
 clean:
-    rm -vrf videodup.db videodup.db.backup _DUPS_ _GRAVEYARD_ list.txt logs.log
+    rm -vrf videodup.db videodup.db.backup _DUPS_ _GRAVEYARD_ list.txt logs.log exported.txt list.txt list_copy.txt videodup_copy.db
 
 mkdirs:
     mkdir -p _GRAVEYARD_ _DUPS_
@@ -34,3 +34,10 @@ list:
 
 randel:
     {{cargo-run}} videodup-edit -- --database-file videodup.db randel:2
+
+export-test:
+    {{cargo-run}} videodup-edit -- --database-file videodup.db export:exported.txt
+    {{cargo-run}} videodup-edit -- --database-file videodup_copy.db import:exported.txt
+    {{cargo-run}} videodup-edit -- --database-file videodup_copy.db list:list_copy.txt
+    {{cargo-run}} videodup-edit -- --database-file videodup.db list:list.txt
+    diff -u list.txt list_copy.txt | head

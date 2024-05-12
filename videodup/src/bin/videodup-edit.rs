@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -10,6 +10,7 @@ use color_eyre::eyre::{self, Context};
 use imgdup_common::{
     bin_common::init::{init_eyre, init_logger},
     bktree::{bktree::BKTree, source_types::AnySource},
+    imghash::hamming::Hamming,
     utils::{repo::Repo, simple_path::SimplePathBuf},
 };
 use rand::seq::IteratorRandom;
@@ -35,6 +36,8 @@ enum Goal {
     Rebuild,
     Purge { repo: PathBuf },
     List { file: PathBuf },
+    Export { file: PathBuf },
+    Import { file: PathBuf },
     RandomDelete { num: usize },
 }
 
@@ -45,6 +48,8 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
         &["stats"] => Ok(Goal::Stats),
         &["rebuild"] => Ok(Goal::Rebuild),
         &["list", file] => Ok(Goal::List { file: file.into() }),
+        &["export", file] => Ok(Goal::Export { file: file.into() }),
+        &["import", file] => Ok(Goal::Import { file: file.into() }),
         &["purge", repo] => Ok(Goal::Purge { repo: repo.into() }),
         &["randel", num] => Ok(Goal::RandomDelete {
             num: num
@@ -55,6 +60,8 @@ fn goal_parser(s: &str) -> Result<Goal, String> {
     }
 }
 
+type Exported<T> = Vec<(Hamming, T)>;
+
 // TODO: much of this should be able to be in its own executable, like an imgdup-edit that
 // can ONLY handle AnySource. Should the VidSrc goals from this file be added as some kind
 // of plugin? How to share the goal structure?
@@ -63,13 +70,17 @@ fn main() -> eyre::Result<()> {
     init_logger(None)?;
     let cli = Cli::parse();
 
-    let mut tree =
-        BKTree::<AnySource>::from_file(&cli.database_file).wrap_err_with(|| {
+    // TODO: this should open with AnySource, but that breaks import cuz it wants to
+    // create a new tree file. Maybe make this variable an Option and create a goal that
+    // opens a file and sets it as current?
+    let mut tree = BKTree::<VidSrc>::from_file(&cli.database_file)
+        .wrap_err_with(|| {
             format!(
                 "failed to open the database at: {}",
                 cli.database_file.display()
             )
-        })?;
+        })?
+        .upcast();
 
     for goal in cli.goals {
         log::info!("Performing goal: {goal:?}");
@@ -98,6 +109,18 @@ fn main() -> eyre::Result<()> {
             Goal::RandomDelete { num } => {
                 let mut vid_tree = tree.downcast().wrap_err("failed to downcast")?;
                 let res = goal_random_delete(&mut vid_tree, num);
+                tree = vid_tree.upcast();
+                res
+            }
+            Goal::Export { ref file } => {
+                let vid_tree = tree.downcast().wrap_err("failed to downcast")?;
+                let res = goal_export(&vid_tree, &file);
+                tree = vid_tree.upcast();
+                res
+            }
+            Goal::Import { ref file } => {
+                let mut vid_tree = tree.downcast().wrap_err("failed to downcast")?;
+                let res = goal_import(&mut vid_tree, &file);
                 tree = vid_tree.upcast();
                 res
             }
@@ -198,6 +221,49 @@ fn goal_list(tree: &BKTree<VidSrc>, file_path: &Path) -> eyre::Result<()> {
     file.flush().wrap_err("failed to flush")?;
 
     log::info!("Wrote the entries in the tree to a file");
+    Ok(())
+}
+
+fn goal_export(tree: &BKTree<VidSrc>, file_path: &Path) -> eyre::Result<()> {
+    log::info!("Reading all entries");
+    let lines = {
+        let mut lines = Exported::<VidSrc>::new();
+        tree.for_each(|hash, vidsrc| {
+            lines.push((hash, vidsrc.deserialize()));
+        })
+        .wrap_err("failed to iterate through the tree")?;
+        lines
+    };
+
+    log::info!(
+        "Writing them to a file at: {}, len={}",
+        file_path.display(),
+        lines.len()
+    );
+    let mut file = BufWriter::new(
+        File::create(file_path)
+            .wrap_err_with(|| format!("failed to open file: {}", file_path.display()))?,
+    );
+    ron::ser::to_writer(&mut file, &lines).wrap_err("failed to write with ron")?;
+    file.flush().wrap_err("failed to flush")?;
+
+    log::info!("Wrote the entries in the tree to a file");
+    Ok(())
+}
+
+fn goal_import(tree: &mut BKTree<VidSrc>, file_path: &Path) -> eyre::Result<()> {
+    log::info!("Reading values to import from: {}", file_path.display());
+    let reader = BufReader::new(
+        File::open(file_path)
+            .wrap_err_with(|| format!("failed to open file: {}", file_path.display()))?,
+    );
+    let exported: Exported<VidSrc> =
+        ron::de::from_reader(reader).wrap_err("failed to read with ron")?;
+
+    log::info!("Adding them all to the tree, a total of {}", exported.len());
+    tree.add_all(exported).wrap_err("failed to add all")?;
+
+    log::info!("Imported the entries");
     Ok(())
 }
 
