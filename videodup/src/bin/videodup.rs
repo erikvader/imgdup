@@ -122,10 +122,6 @@ fn main() -> eyre::Result<()> {
     log::debug!("CLI arguments: {cli:#?}");
 
     // TODO: extract all these functions
-    log::info!("Backing up the database file");
-    fsutils::backup_file(&cli.database_file)
-        .wrap_err("failed to backup the database file")?;
-    log::info!("Backed it up, if it existed");
 
     let mut tree =
         BKTree::<VidSrc>::from_file(&cli.database_file).wrap_err_with(|| {
@@ -135,6 +131,29 @@ fn main() -> eyre::Result<()> {
             )
         })?;
 
+    let tree_files = {
+        let tree = &tree;
+        log::info!(
+            "Finding all files in database at: {}",
+            cli.database_file.display()
+        );
+        let tree_files: HashSet<SimplePathBuf> = {
+            let mut tree_files = HashSet::new();
+            tree.for_each(|_, src| {
+                tree_files.insert(src.path().to_owned());
+            })?;
+            tree_files
+        };
+        log::info!("Found {} files", tree_files.len());
+
+        log::info!("Backing up the database file");
+        fsutils::backup_file(&cli.database_file)
+            .wrap_err("failed to backup the database file")?;
+        log::info!("Backed it up");
+
+        tree_files
+    };
+
     log::info!("Finding all files in: {:?}", cli.src_dirs);
     let src_files: Vec<PathBuf> = all_files(cli.src_dirs)?;
     let src_files: Result<HashSet<SimplePathBuf>, _> = src_files
@@ -143,19 +162,6 @@ fn main() -> eyre::Result<()> {
         .collect();
     let src_files = src_files.wrap_err("some path from a src dir is not simple")?;
     log::info!("Found {} files", src_files.len());
-
-    log::info!(
-        "Finding all files in database at: {}",
-        cli.database_file.display()
-    );
-    let tree_files: HashSet<SimplePathBuf> = {
-        let mut tree_files = HashSet::new();
-        tree.for_each(|_, src| {
-            tree_files.insert(src.path().to_owned());
-        })?;
-        tree_files
-    };
-    log::info!("Found {} files", tree_files.len());
 
     let new_files: Vec<&SimplePath> = src_files
         .difference(&tree_files)
