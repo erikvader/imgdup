@@ -147,4 +147,11 @@ mod test {
             Hamming(0b010).distance_to(Hamming(0b101))
         );
     }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    /// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
+    fn alignment_x86_64() {
+        assert_eq!(16, std::mem::align_of::<Container>());
+    }
 }

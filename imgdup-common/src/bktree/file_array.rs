@@ -138,6 +138,7 @@ impl<T> From<Ref<T>> for u64 {
     }
 }
 
+// TODO: somehow save the expected architecture too
 type HEADER = usize;
 const HEADER_SIZE: usize = std::mem::size_of::<HEADER>();
 
@@ -561,7 +562,7 @@ mod test {
         assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<u64>());
         assert_eq!(Ref::new_u64(16), FileArray::ref_to_first::<usize>());
         assert_eq!(Ref::new_u64(9), FileArray::ref_to_first::<u8>());
-        assert_eq!(Ref::new_u64(24), FileArray::ref_to_first::<u128>());
+        assert_eq!(Ref::new_u64(32), FileArray::ref_to_first::<u128>());
         assert_eq!(Ref::new_u64(32), FileArray::ref_to_first::<MyStuff>());
     }
 }
