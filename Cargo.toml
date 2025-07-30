@@ -56,6 +56,9 @@ rand = {version = "0.8", features = ["small_rng"]}
 [profile.dev.build-override]
 opt-level = 3
 
+[profile.release.build-override]
+opt-level = 3
+
 [profile.release]
 # NOTE: its nice to have debuginfo
 # strip = "debuginfo"
